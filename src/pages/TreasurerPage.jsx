@@ -413,7 +413,7 @@ export function TreasurerPage() {
 
       <section className="dashboard-main">
         <header ref={topRef} className="dashboard-topbar panel">
-          <div>
+          <div className="dashboard-topbar-copy">
             <span className="eyebrow">Saidas</span>
             <h1>Adiantamento</h1>
             <p>{session.currentUser?.nome} - Tesouraria Central</p>
@@ -533,9 +533,17 @@ export function TreasurerPage() {
                   </div>
                 </div>
 
+                <div className="form-intro-card full-span is-assistant">
+                  <div>
+                    <span className="eyebrow">Portal controlado</span>
+                    <strong>Centralize o acesso do auxiliar com link fixo, PIN e uma mensagem pronta para compartilhar.</strong>
+                  </div>
+                  <p>Quando o PIN for alterado, o acesso anterior deixa de valer imediatamente e o portal continua no mesmo endereço.</p>
+                </div>
+
                 {assistantUser ? (
                   <>
-                    <div className="detail-grid compact-grid">
+                    <div className="detail-grid compact-grid assistant-access-grid">
                       <div>
                         <span>Link do auxiliar</span>
                         <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>

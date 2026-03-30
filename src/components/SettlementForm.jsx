@@ -45,6 +45,14 @@ export function SettlementForm({ advance, onSave }) {
         </div>
       </div>
 
+      <div className="form-intro-card full-span is-acms">
+        <div>
+          <span className="eyebrow">Controle operacional</span>
+          <strong>Registre o uso do valor e acompanhe o que ainda falta lancar.</strong>
+        </div>
+        <p>Esse bloco serve como apoio de conferência e lembrete operacional, sem substituir os documentos fiscais.</p>
+      </div>
+
       <div className="detail-grid compact-grid full-span">
         <div>
           <span>Valor comprovado</span>

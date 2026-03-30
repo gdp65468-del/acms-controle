@@ -89,6 +89,14 @@ export function AuthorizationForm({ advance, assistantUser, existingAuthorizatio
         </div>
       </div>
 
+      <div className="form-intro-card full-span is-repass">
+        <div>
+          <span className="eyebrow">Repasse ao auxiliar</span>
+          <strong>Envie uma orientação curta, objetiva e fácil de executar.</strong>
+        </div>
+        <p>Você pode reforçar a instrução com áudio e reenviar sempre que precisar ajustar a entrega.</p>
+      </div>
+
       <label className="full-span">
         Observacao rapida
         <textarea

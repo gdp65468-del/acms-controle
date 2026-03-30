@@ -132,6 +132,14 @@ export function AdvanceForm({ users, advances, currentUser, onSave, onCreateMemb
         </div>
       </div>
 
+      <div className="form-intro-card full-span">
+        <div>
+          <span className="eyebrow">Fluxo rapido</span>
+          <strong>Escolha o responsavel, informe o valor e registre a finalidade.</strong>
+        </div>
+        <p>O sistema calcula automaticamente o vencimento e deixa o acompanhamento pronto para ACMS e repasse.</p>
+      </div>
+
       <label>
         Responsavel
         <select value={form.usuarioId} onChange={(event) => handleChange("usuarioId", event.target.value)} required>
