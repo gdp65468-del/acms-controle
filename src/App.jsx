@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppProvider, useAppContext } from "./context/AppContext";
+import { auth, firebaseEnabled } from "./firebase";
 import { LandingPage } from "./pages/LandingPage";
 import { TreasurerPage } from "./pages/TreasurerPage";
 import { AssistantPage } from "./pages/AssistantPage";
@@ -10,6 +11,9 @@ import { DriveUploadPage } from "./pages/DriveUploadPage";
 function ProtectedTreasurerRoute({ element }) {
   const { loading, session } = useAppContext();
   if (loading) return <div className="screen-center">Carregando...</div>;
+  if (firebaseEnabled && auth?.currentUser && !session.currentUser) {
+    return <div className="screen-center">Validando acesso da tesouraria...</div>;
+  }
   if (!session.currentUser || session.currentUser.role !== "treasurer") return <Navigate to="/" replace />;
   return element;
 }

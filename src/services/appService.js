@@ -1812,20 +1812,15 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.deleteAdvance(advanceId);
     }
-    const batch = writeBatch(db);
-    const historySnapshot = await getDocs(query(collection(db, COLLECTIONS.history), where("advanceId", "==", advanceId)));
-    historySnapshot.forEach((item) => batch.delete(item.ref));
-    const authorizationSnapshot = await getDocs(
-      query(collection(db, COLLECTIONS.authorizations), where("advanceId", "==", advanceId))
-    );
-    authorizationSnapshot.forEach((item) => {
-      batch.delete(item.ref);
-      const authorization = item.data();
-      const accessToken = authorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
-      batch.delete(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", item.id));
+    const response = await fetch("/api/advances/delete", {
+      method: "POST",
+      headers: {
+        ...(await getTreasurerAuthHeaders()),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ advanceId })
     });
-    batch.delete(doc(db, COLLECTIONS.advances, advanceId));
-    await batch.commit();
+    await parseApiResponse(response);
   },
 
   subscribeAssistantAccess(token, callback) {

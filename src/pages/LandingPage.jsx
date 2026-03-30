@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import { Icon } from "../components/Icon";
 import { useAppContext } from "../context/AppContext";
 
@@ -6,11 +7,16 @@ export function LandingPage() {
   const navigate = useNavigate();
   const { actions, session, message, setMessage } = useAppContext();
 
+  useEffect(() => {
+    if (session.currentUser?.role === "treasurer") {
+      navigate("/app", { replace: true });
+    }
+  }, [navigate, session.currentUser]);
+
   async function handleGoogleLogin() {
     try {
       setMessage("");
       await actions.signInTreasurer();
-      navigate("/app");
     } catch (error) {
       setMessage(error?.message || "Nao foi possivel entrar agora.");
     }
