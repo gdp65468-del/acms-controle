@@ -38,6 +38,60 @@ const ASSISTANT_PORTAL_ID = "principal";
 const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 const DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES = 30;
 
+function isFirebasePublicContext() {
+  return firebaseEnabled && !auth?.currentUser;
+}
+
+function getAssistantSessionStorageKey(token = ASSISTANT_PORTAL_ID) {
+  return `acms-assistant-unlocked:${token}`;
+}
+
+function getDriveUploadSessionStorageKey(sessionId) {
+  return `acms-drive-upload:${sessionId}`;
+}
+
+async function parseApiResponse(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.message || "Nao foi possivel concluir esta acao.");
+  }
+  return payload;
+}
+
+async function apiRequest(path, { method = "GET", body, headers = {}, isFormData = false } = {}) {
+  const requestHeaders = { ...headers };
+  let requestBody = body;
+  if (body && !isFormData) {
+    requestHeaders["Content-Type"] = "application/json";
+    requestBody = JSON.stringify(body);
+  }
+  const response = await fetch(path, {
+    method,
+    headers: requestHeaders,
+    body: requestBody
+  });
+  return parseApiResponse(response);
+}
+
+function readStoredJson(key) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getTreasurerAuthHeaders() {
+  if (!auth?.currentUser) {
+    throw new Error("Sessao da tesouraria nao encontrada.");
+  }
+  const idToken = await auth.currentUser.getIdToken();
+  return {
+    Authorization: `Bearer ${idToken}`
+  };
+}
+
 async function saveHistory(advanceId, type, message) {
   await addDoc(collection(db, COLLECTIONS.history), {
     advanceId,
@@ -200,6 +254,20 @@ function buildAssistantPortalResponse(assistantUser, accessData = {}) {
       assistantLink,
       assistantPin
     })
+  };
+}
+
+function mapPublicAssistantPortal(portal = {}) {
+  const failedAttempts = Number(portal.failedAttempts || 0);
+  const isBlocked = Boolean(portal.isBlocked);
+  return {
+    id: ASSISTANT_PORTAL_ID,
+    nome: portal.assistantName || "Tesoureiro auxiliar",
+    failedAttempts,
+    isBlocked,
+    blockedAt: portal.blockedAt || "",
+    updatedAt: portal.updatedAt || "",
+    statusLabel: isBlocked ? "Bloqueado por tentativas" : "Ativo"
   };
 }
 
@@ -760,6 +828,11 @@ export const appService = {
       return localDb.getDriveUploadSession(sessionId, { includeSecret });
     }
 
+    if (isFirebasePublicContext()) {
+      const payload = await apiRequest(`/api/drive-upload/session?sessionId=${encodeURIComponent(sessionId)}`);
+      return payload.session;
+    }
+
     const sessionRef = doc(db, COLLECTIONS.driveUploadSessions, sessionId);
     const sessionSnapshot = await getDoc(sessionRef);
     if (!sessionSnapshot.exists()) {
@@ -852,6 +925,28 @@ export const appService = {
       return localDb.touchDriveUploadSession(sessionId, accessCodeHash);
     }
 
+    if (isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getDriveUploadSessionStorageKey(sessionId));
+      if (!storedSession?.token) {
+        throw new Error("Sessao de upload nao encontrada.");
+      }
+      const payload = await apiRequest("/api/drive-upload/touch", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        },
+        body: { sessionId }
+      });
+      localStorage.setItem(
+        getDriveUploadSessionStorageKey(sessionId),
+        JSON.stringify({
+          token: payload.sessionToken,
+          expiresAt: payload.session?.expiresAt || ""
+        })
+      );
+      return true;
+    }
+
     const sessionRef = doc(db, COLLECTIONS.driveUploadSessions, sessionId);
     const sessionSnapshot = await getDoc(sessionRef);
     if (!sessionSnapshot.exists()) {
@@ -873,6 +968,21 @@ export const appService = {
   },
 
   async validateDriveUploadSession(sessionId, accessCode) {
+    if (firebaseEnabled && isFirebasePublicContext()) {
+      const payload = await apiRequest("/api/drive-upload/unlock", {
+        method: "POST",
+        body: { sessionId, accessCode }
+      });
+      localStorage.setItem(
+        getDriveUploadSessionStorageKey(sessionId),
+        JSON.stringify({
+          token: payload.sessionToken,
+          expiresAt: payload.session?.expiresAt || ""
+        })
+      );
+      return payload.session;
+    }
+
     const session = await this.getDriveUploadSession(sessionId);
     if (session.status !== "ATIVA" || session.isExpired) {
       throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
@@ -892,7 +1002,25 @@ export const appService = {
   },
 
   isDriveUploadSessionUnlocked(sessionId, session = null) {
-    const storedHash = localStorage.getItem(`acms-drive-upload:${sessionId}`);
+    const storageKey = getDriveUploadSessionStorageKey(sessionId);
+    if (firebaseEnabled && isFirebasePublicContext()) {
+      const storedSession = readStoredJson(storageKey);
+      if (!storedSession?.token) return false;
+      if (!storedSession.expiresAt) return true;
+      const expiresAt = new Date(storedSession.expiresAt);
+      if (Number.isNaN(expiresAt.getTime())) return true;
+      if (expiresAt.getTime() <= Date.now()) {
+        localStorage.removeItem(storageKey);
+        return false;
+      }
+      if (session && (session.status !== "ATIVA" || session.isExpired)) {
+        localStorage.removeItem(storageKey);
+        return false;
+      }
+      return true;
+    }
+
+    const storedHash = localStorage.getItem(storageKey);
     if (!storedHash) return false;
     if (!session) return true;
     if (session.status !== "ATIVA" || isDriveUploadSessionExpired(session)) return false;
@@ -900,7 +1028,7 @@ export const appService = {
   },
 
   lockDriveUploadSession(sessionId) {
-    localStorage.removeItem(`acms-drive-upload:${sessionId}`);
+    localStorage.removeItem(getDriveUploadSessionStorageKey(sessionId));
   },
 
   async listSessionAssets(sessionId) {
@@ -910,6 +1038,19 @@ export const appService = {
       return localDb.listSessionAssets(sessionId);
     }
 
+    if (isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getDriveUploadSessionStorageKey(sessionId));
+      if (!storedSession?.token) {
+        throw new Error("Sessao de upload nao encontrada.");
+      }
+      const payload = await apiRequest(`/api/drive-upload/assets?sessionId=${encodeURIComponent(sessionId)}`, {
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        }
+      });
+      return payload.assets || [];
+    }
+
     const snapshot = await getDocs(query(collection(db, COLLECTIONS.fileAssets), where("uploadSessionId", "==", String(sessionId))));
     return sortByDateDesc(snapshot.docs.map((item) => mapFileAsset(item.id, item.data())), "createdAt").filter(
       (item) => !item.deletedAt
@@ -917,6 +1058,40 @@ export const appService = {
   },
 
   async uploadFileAssetToSession(payload) {
+    if (firebaseEnabled && isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getDriveUploadSessionStorageKey(payload.sessionId));
+      if (!storedSession?.token) {
+        throw new Error("Sessao de upload nao encontrada.");
+      }
+
+      const fileType = getFileAssetType(payload.file);
+      if (!fileType) {
+        throw new Error("Envie apenas imagem ou PDF.");
+      }
+
+      const preparedFile = await prepareFileForUpload(payload.file);
+      const finalTitle = String(payload.title || preparedFile.name || payload.file.name || "").trim();
+      if (!finalTitle) {
+        throw new Error("Informe um titulo para o arquivo.");
+      }
+
+      const formData = new FormData();
+      formData.append("sessionId", payload.sessionId);
+      formData.append("title", finalTitle);
+      formData.append("notes", String(payload.notes || "").trim());
+      formData.append("file", preparedFile, preparedFile.name || payload.file.name || "arquivo");
+
+      const response = await fetch("/api/drive-upload/upload", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        },
+        body: formData
+      });
+      const result = await parseApiResponse(response);
+      return result.asset;
+    }
+
     const session = await this.getDriveUploadSession(payload.sessionId);
     if (session.status !== "ATIVA" || session.isExpired) {
       throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
@@ -995,6 +1170,25 @@ export const appService = {
       return localDb.renameSessionAsset(assetId, sessionId, accessCodeHash, normalizedTitle);
     }
 
+    if (isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getDriveUploadSessionStorageKey(sessionId));
+      if (!storedSession?.token) {
+        throw new Error("Sessao de upload nao encontrada.");
+      }
+      await apiRequest("/api/drive-upload/assets", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        },
+        body: {
+          sessionId,
+          assetId,
+          title: normalizedTitle
+        }
+      });
+      return true;
+    }
+
     const assetRef = doc(db, COLLECTIONS.fileAssets, assetId);
     const assetSnapshot = await getDoc(assetRef);
     if (!assetSnapshot.exists()) {
@@ -1016,6 +1210,23 @@ export const appService = {
   async deleteSessionAsset(assetId, sessionId, accessCodeHash) {
     if (!firebaseEnabled) {
       return localDb.deleteSessionAsset(assetId, sessionId, accessCodeHash);
+    }
+
+    if (isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getDriveUploadSessionStorageKey(sessionId));
+      if (!storedSession?.token) {
+        throw new Error("Sessao de upload nao encontrada.");
+      }
+      await apiRequest(
+        `/api/drive-upload/assets?sessionId=${encodeURIComponent(sessionId)}&assetId=${encodeURIComponent(assetId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${storedSession.token}`
+          }
+        }
+      );
+      return true;
     }
 
     const assetRef = doc(db, COLLECTIONS.fileAssets, assetId);
@@ -1079,35 +1290,21 @@ export const appService = {
       throw new Error("Configure o Cloudinary para enviar arquivos.");
     }
 
-    const folderName = payload.folderPath
-      ? `acms-controle/${payload.folderPath
-          .split("/")
-          .filter(Boolean)
-          .map((segment) => segment.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""))
-          .join("/")}`
-      : "acms-controle/geral";
+    const formData = new FormData();
+    formData.append("folderId", String(payload.folderId || ""));
+    formData.append("folderPath", String(payload.folderPath || ""));
+    formData.append("title", finalTitle);
+    formData.append("notes", String(payload.notes || "").trim());
+    formData.append("uploadedBy", String(payload.uploadedBy || ""));
+    formData.append("file", preparedFile, preparedFile.name || payload.file.name || "arquivo");
 
-    const cloudinaryResult = await uploadToCloudinary(preparedFile, folderName);
-
-    const record = {
-      folderId: payload.folderId,
-      title: finalTitle,
-      originalFileName: payload.file.name,
-      fileType,
-      mimeType: preparedFile.type,
-      cloudinaryPublicId: cloudinaryResult.public_id || "",
-      secureUrl: cloudinaryResult.secure_url || "",
-      thumbnailUrl: fileType === "image" ? cloudinaryResult.secure_url || "" : "",
-      notes: String(payload.notes || "").trim(),
-      digitized: false,
-      digitizedAt: "",
-      deletedAt: "",
-      uploadedBy: payload.uploadedBy,
-      createdAt: serverTimestamp()
-    };
-
-    const docRef = await addDoc(collection(db, COLLECTIONS.fileAssets), record);
-    return { id: docRef.id, ...record };
+    const response = await fetch("/api/files/upload", {
+      method: "POST",
+      headers: await getTreasurerAuthHeaders(),
+      body: formData
+    });
+    const result = await parseApiResponse(response);
+    return result.asset;
   },
 
   async renameFileFolder(folderId, name) {
@@ -1551,6 +1748,24 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.markAuthorizationDelivered(authorization.id);
     }
+    if (isFirebasePublicContext()) {
+      const storedSession = readStoredJson(getAssistantSessionStorageKey(accessToken || ASSISTANT_PORTAL_ID));
+      if (!storedSession?.token) {
+        throw new Error("Sessao do auxiliar nao encontrada.");
+      }
+      await apiRequest("/api/assistant/orders", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        },
+        body: {
+          action: "delivered",
+          orderId: authorization.authorizationId || authorization.id
+        }
+      });
+      window.dispatchEvent(new CustomEvent("acms-assistant-public-updated"));
+      return true;
+    }
     await updateDoc(doc(db, COLLECTIONS.authorizations, authorization.id), {
       status: "ENTREGUE",
       deliveredAt: new Date().toISOString()
@@ -1617,6 +1832,56 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.subscribeAssistantAccess(token, callback);
     }
+    if (isFirebasePublicContext()) {
+      const resolvedToken = token || ASSISTANT_PORTAL_ID;
+      let active = true;
+
+      const emit = async () => {
+        try {
+          const portalPayload = await apiRequest("/api/assistant/public");
+          const assistantUser = portalPayload.portal?.configured ? mapPublicAssistantPortal(portalPayload.portal) : null;
+          let authorizations = [];
+          const storedSession = readStoredJson(getAssistantSessionStorageKey(resolvedToken));
+          if (storedSession?.token && assistantUser && !assistantUser.isBlocked) {
+            try {
+              const ordersPayload = await apiRequest("/api/assistant/orders", {
+                headers: {
+                  Authorization: `Bearer ${storedSession.token}`
+                }
+              });
+              authorizations = ordersPayload.authorizations || [];
+            } catch (error) {
+              localStorage.removeItem(getAssistantSessionStorageKey(resolvedToken));
+              if (!active) return;
+            }
+          }
+
+          if (active) {
+            callback({
+              assistantUser,
+              authorizations
+            });
+          }
+        } catch {
+          if (active) {
+            callback({
+              assistantUser: null,
+              authorizations: []
+            });
+          }
+        }
+      };
+
+      emit();
+      const onRefresh = () => emit();
+      window.addEventListener("acms-assistant-public-updated", onRefresh);
+      const timer = window.setInterval(emit, 15000);
+      return () => {
+        active = false;
+        window.removeEventListener("acms-assistant-public-updated", onRefresh);
+        window.clearInterval(timer);
+      };
+    }
     const resolvedToken = token || ASSISTANT_PORTAL_ID;
 
     const state = { assistantUser: null, authorizations: [] };
@@ -1667,6 +1932,22 @@ export const appService = {
     if (!assistantUser) {
       throw new Error("Nenhum usuario auxiliar configurado.");
     }
+    if (firebaseEnabled && isFirebasePublicContext()) {
+      const payload = await apiRequest("/api/assistant/unlock", {
+        method: "POST",
+        body: { pin }
+      });
+      localStorage.setItem(
+        getAssistantSessionStorageKey(token || ASSISTANT_PORTAL_ID),
+        JSON.stringify({
+          token: payload.sessionToken,
+          updatedAt: payload.portal?.updatedAt || "",
+          assistantId: payload.portal?.assistantId || assistantUser.id || ""
+        })
+      );
+      window.dispatchEvent(new CustomEvent("acms-assistant-public-updated"));
+      return true;
+    }
     if (assistantUser.isBlocked) {
       throw new Error("Acesso bloqueado. Solicite um novo PIN a tesouraria.");
     }
@@ -1687,14 +1968,25 @@ export const appService = {
   },
 
   isAssistantUnlocked(token = ASSISTANT_PORTAL_ID, assistantUser = null) {
+    if (firebaseEnabled && isFirebasePublicContext()) {
+      if (assistantUser?.isBlocked) return false;
+      const storedValue = readStoredJson(getAssistantSessionStorageKey(token));
+      if (!storedValue?.token) return false;
+      if (!assistantUser?.updatedAt) return true;
+      if (storedValue.updatedAt !== String(assistantUser.updatedAt)) {
+        localStorage.removeItem(getAssistantSessionStorageKey(token));
+        return false;
+      }
+      return true;
+    }
     if (assistantUser?.isBlocked) return false;
-    const storedValue = localStorage.getItem(`acms-assistant-unlocked:${token}`);
+    const storedValue = localStorage.getItem(getAssistantSessionStorageKey(token));
     if (!storedValue) return false;
     if (!assistantUser?.updatedAt) return Boolean(storedValue);
     return storedValue === String(assistantUser.updatedAt);
   },
 
   lockAssistant(token = ASSISTANT_PORTAL_ID) {
-    localStorage.removeItem(`acms-assistant-unlocked:${token}`);
+    localStorage.removeItem(getAssistantSessionStorageKey(token));
   }
 };

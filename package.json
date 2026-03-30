@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "firebase": "^11.5.0",
+    "firebase-admin": "^13.5.0",
+    "formidable": "^3.5.4",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
