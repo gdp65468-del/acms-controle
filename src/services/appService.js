@@ -1713,24 +1713,19 @@ export const appService = {
       return localDb.updateAssistantPortalPin(assistantUser, normalizedPin);
     }
 
-    const pinHash = await hashPin(normalizedPin);
-    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), {
-      pin: normalizedPin,
-      accessToken: assistantAccessToken
+    const headers = await getTreasurerAuthHeaders();
+    const payload = await apiRequest("/api/assistant/pin", {
+      method: "POST",
+      headers,
+      body: {
+        assistantId: assistantUser.id,
+        assistantName: assistantUser.nome,
+        pin: normalizedPin
+      }
     });
-    await setDoc(
-      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken),
-      buildAssistantPortalRecord(
-        {
-          ...assistantUser,
-          pin: normalizedPin
-        },
-        pinHash
-      ),
-      { merge: true }
-    );
 
     localStorage.removeItem(`acms-assistant-unlocked:${assistantAccessToken}`);
+    window.dispatchEvent(new CustomEvent("acms-assistant-public-updated"));
 
     return {
       assistantLink,
@@ -1739,6 +1734,7 @@ export const appService = {
       failedAttempts: 0,
       isBlocked: false,
       blockedAt: "",
+      updatedAt: payload.assistant?.updatedAt || new Date().toISOString(),
       statusLabel: "Ativo",
       shareMessage: buildAssistantShareMessage({
         assistantName: assistantUser.nome,

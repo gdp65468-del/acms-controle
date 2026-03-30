@@ -17,6 +17,10 @@ function assistantAccessRef() {
   return adminDb.collection(COLLECTIONS.assistantAccess).doc(ASSISTANT_PORTAL_ID);
 }
 
+function normalizeAssistantPin(pin) {
+  return String(pin || "").replace(/\D/g, "").slice(0, 4);
+}
+
 function toIso(value) {
   if (!value) return "";
   if (typeof value.toDate === "function") {
@@ -136,6 +140,62 @@ export async function unlockAssistantPortal(pin) {
       ...sanitizeAccess(data),
       sessionVersion: buildAssistantSessionVersion(data)
     }
+  };
+}
+
+export async function saveAssistantPortalPin({ assistantId, assistantName, pin }) {
+  const adminDb = getAdminDb();
+  const normalizedPin = normalizeAssistantPin(pin);
+
+  if (!assistantId) {
+    throw new Error("Tesoureiro auxiliar nao encontrado.");
+  }
+
+  if (normalizedPin.length !== 4) {
+    throw new Error("Informe um PIN de 4 digitos.");
+  }
+
+  const assistantRef = adminDb.collection("usuarios").doc(String(assistantId));
+  const assistantSnapshot = await assistantRef.get();
+  if (!assistantSnapshot.exists) {
+    throw new Error("Tesoureiro auxiliar nao encontrado.");
+  }
+
+  const assistantData = assistantSnapshot.data() || {};
+  if (assistantData.role !== "assistant") {
+    throw new Error("Este cadastro nao pertence ao tesoureiro auxiliar.");
+  }
+
+  const normalizedName = String(assistantName || assistantData.nome || "Tesoureiro auxiliar").trim();
+  const pinHash = sha256(normalizedPin);
+  const updatedAt = new Date().toISOString();
+
+  await assistantRef.set(
+    {
+      nome: normalizedName,
+      pin: normalizedPin,
+      accessToken: ASSISTANT_PORTAL_ID
+    },
+    { merge: true }
+  );
+
+  await assistantAccessRef().set(
+    {
+      assistantId: assistantSnapshot.id,
+      assistantName: normalizedName,
+      pinHash,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: "",
+      updatedAt
+    },
+    { merge: true }
+  );
+
+  return {
+    assistantId: assistantSnapshot.id,
+    assistantName: normalizedName,
+    updatedAt
   };
 }
 
