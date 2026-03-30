@@ -137,28 +137,6 @@ export function FilesPage() {
   }, [feedback]);
 
   useEffect(() => {
-    if (!lightboxAsset) return undefined;
-
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        setLightboxAsset(null);
-        return;
-      }
-      if (event.key === "ArrowLeft" && hasPreviousLightboxAsset) {
-        event.preventDefault();
-        openLightboxByIndex(lightboxIndex - 1);
-      }
-      if (event.key === "ArrowRight" && hasNextLightboxAsset) {
-        event.preventDefault();
-        openLightboxByIndex(lightboxIndex + 1);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasNextLightboxAsset, hasPreviousLightboxAsset, lightboxAsset, lightboxIndex]);
-
-  useEffect(() => {
     if (!lightboxDragging) return undefined;
 
     function handlePointerMove(event) {
@@ -324,6 +302,28 @@ export function FilesPage() {
         .map((item) => ({ id: item.id, label: buildFolderPath(item, activeFolders) }))
     );
   }, [activeFolders, moveModal]);
+
+  useEffect(() => {
+    if (!lightboxAsset) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setLightboxAsset(null);
+        return;
+      }
+      if (event.key === "ArrowLeft" && hasPreviousLightboxAsset) {
+        event.preventDefault();
+        openLightboxByIndex(lightboxIndex - 1);
+      }
+      if (event.key === "ArrowRight" && hasNextLightboxAsset) {
+        event.preventDefault();
+        openLightboxByIndex(lightboxIndex + 1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasNextLightboxAsset, hasPreviousLightboxAsset, lightboxAsset, lightboxIndex]);
 
   useEffect(() => {
     if (currentSection !== "trash" && !currentAssets.length) {
