@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f4c5c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="/manifest-tesouraria.webmanifest" />
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <title>Instalar ACMS Tesouraria</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: radial-gradient(circle at top, #edf6ff 0%, #f6f9fc 40%, #eef3f8 100%);
+        --panel: rgba(255, 255, 255, 0.94);
+        --ink: #162235;
+        --muted: #617189;
+        --line: rgba(47, 92, 151, 0.14);
+        --accent: linear-gradient(135deg, #2f80ed, #1f5ed8);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      .panel {
+        width: min(520px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: 0 24px 60px rgba(36, 74, 128, 0.16);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(47, 128, 237, 0.11);
+        color: #215fce;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      h1 {
+        margin: 18px 0 10px;
+        font-size: clamp(30px, 6vw, 40px);
+        line-height: 1.05;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .button {
+        appearance: none;
+        border: 0;
+        border-radius: 16px;
+        padding: 14px 18px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+      }
+
+      .button-primary {
+        color: #fff;
+        background: var(--accent);
+        box-shadow: 0 16px 32px rgba(47, 128, 237, 0.22);
+      }
+
+      .button-secondary {
+        color: var(--ink);
+        background: #fff;
+        border: 1px solid var(--line);
+      }
+
+      .helper {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(30, 66, 120, 0.05);
+        color: var(--muted);
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <span class="eyebrow">App separado</span>
+      <h1>Instalar ACMS Tesouraria</h1>
+      <p>Use esta instalacao para abrir direto no painel principal da tesouraria, com login Google e acesso completo ao sistema.</p>
+
+      <div class="actions">
+        <button id="install-button" class="button button-primary" type="button">Instalar app</button>
+        <a class="button button-secondary" href="/app">Abrir no navegador</a>
+      </div>
+
+      <div class="helper" id="install-helper">
+        No celular, se o botao de instalar nao aparecer, abra o menu do navegador e escolha <strong>Instalar app</strong> ou <strong>Adicionar a tela inicial</strong>.
+      </div>
+    </main>
+
+    <script>
+      let deferredPrompt = null;
+      const installButton = document.getElementById("install-button");
+      const helper = document.getElementById("install-helper");
+
+      window.addEventListener("beforeinstallprompt", (event) => {
+        event.preventDefault();
+        deferredPrompt = event;
+      });
+
+      installButton.addEventListener("click", async () => {
+        if (!deferredPrompt) {
+          helper.textContent = "Se o navegador nao mostrar a instalacao direta, use o menu do navegador e escolha instalar o app.";
+          return;
+        }
+
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice.catch(() => null);
+        deferredPrompt = null;
+      });
+
+      if (window.matchMedia("(display-mode: standalone)").matches) {
+        window.location.replace("/app");
+      }
+    </script>
+  </body>
+</html>

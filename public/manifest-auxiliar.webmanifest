@@ -1,0 +1,33 @@
+{
+  "id": "/auxiliar",
+  "name": "ACMS Auxiliar",
+  "short_name": "Auxiliar",
+  "description": "Portal do tesoureiro auxiliar do ACMS Controle.",
+  "theme_color": "#123047",
+  "background_color": "#0d1520",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "start_url": "/auxiliar",
+  "scope": "/auxiliar",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

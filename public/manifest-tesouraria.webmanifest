@@ -1,0 +1,33 @@
+{
+  "id": "/app",
+  "name": "ACMS Tesouraria",
+  "short_name": "Tesouraria",
+  "description": "Painel operacional da tesouraria do ACMS Controle.",
+  "theme_color": "#0f4c5c",
+  "background_color": "#f7f3e9",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "start_url": "/app",
+  "scope": "/app",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -59,6 +59,21 @@ export function LandingPage() {
           </Link>
         </div>
 
+        <div className="callout-box">
+          <strong>Instalar apps separados no Android</strong>
+          <p>
+            Se quiser dois icones diferentes no celular, instale a tesouraria e o auxiliar por estes atalhos.
+          </p>
+          <div className="actions-row">
+            <a className="button-ghost" href="/install-tesouraria.html">
+              Instalar app da tesouraria
+            </a>
+            <a className="button-ghost" href="/install-auxiliar.html">
+              Instalar app do auxiliar
+            </a>
+          </div>
+        </div>
+
         {session.currentUser ? (
           <button className="text-link" onClick={() => navigate("/app")}>
             Continuar sessao de {session.currentUser.nome}
