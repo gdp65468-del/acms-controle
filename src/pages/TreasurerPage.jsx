@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AdvanceForm } from "../components/AdvanceForm";
 import { AuthorizationForm } from "../components/AuthorizationForm";
+import { AudioRecorder } from "../components/AudioRecorder";
 import { PrintTermButton } from "../components/PrintTermButton";
 import { SettlementForm } from "../components/SettlementForm";
 import { StatusBadge } from "../components/StatusBadge";
 import { SummaryCard } from "../components/SummaryCard";
+import { VoiceNotePlayer } from "../components/VoiceNotePlayer";
 import { Icon } from "../components/Icon";
 import { useAppContext } from "../context/AppContext";
 import { acmsLaunchLabel, formatCurrency, formatDate, formatMonthYear, getOutstandingAmount } from "../utils/format";
@@ -24,6 +26,9 @@ export function TreasurerPage() {
   const [assistantPortalFeedback, setAssistantPortalFeedback] = useState("");
   const [assistantPinDraft, setAssistantPinDraft] = useState("");
   const [assistantSetupName, setAssistantSetupName] = useState("");
+  const [selectedAuxAuthorizationId, setSelectedAuxAuthorizationId] = useState("");
+  const [auxChatDescription, setAuxChatDescription] = useState("");
+  const [auxChatAudioFile, setAuxChatAudioFile] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
   const [toastType, setToastType] = useState("success");
   const topRef = useRef(null);
@@ -299,6 +304,57 @@ export function TreasurerPage() {
   const selectedHistory = history.filter((item) => item.advanceId === selectedAdvance?.id).slice(0, 8);
   const selectedAuthorization = authorizations.find((item) => item.advanceId === selectedAdvance?.id);
   const selectedOutstandingAmount = selectedAdvance ? getOutstandingAmount(selectedAdvance) : 0;
+  const assistantAuthorizations = useMemo(
+    () => authorizations.filter((item) => item.assistantId === assistantUser?.id),
+    [assistantUser?.id, authorizations]
+  );
+  const selectedAuxAuthorization =
+    assistantAuthorizations.find((item) => item.id === selectedAuxAuthorizationId) || assistantAuthorizations[0] || null;
+  const selectedAuxAdvance = advances.find((item) => item.id === selectedAuxAuthorization?.advanceId) || null;
+
+  useEffect(() => {
+    if (!assistantAuthorizations.length) {
+      setSelectedAuxAuthorizationId("");
+      return;
+    }
+    if (!assistantAuthorizations.some((item) => item.id === selectedAuxAuthorizationId)) {
+      setSelectedAuxAuthorizationId(assistantAuthorizations[0].id);
+    }
+  }, [assistantAuthorizations, selectedAuxAuthorizationId]);
+
+  useEffect(() => {
+    setAuxChatDescription(selectedAuxAuthorization?.description || "");
+    setAuxChatAudioFile(null);
+  }, [selectedAuxAuthorization?.id, selectedAuxAuthorization?.description]);
+
+  async function handleAuxChatSave(resent = false) {
+    if (!selectedAuxAuthorization) return;
+    try {
+      const payload = {
+        authorizationId: selectedAuxAuthorization.id,
+        advanceId: selectedAuxAuthorization.advanceId,
+        assistantId: selectedAuxAuthorization.assistantId,
+        assistantName: selectedAuxAuthorization.assistantName,
+        memberName: selectedAuxAuthorization.memberName,
+        amount: selectedAuxAuthorization.amount,
+        description: auxChatDescription,
+        audioFile: auxChatAudioFile,
+        existingAuthorization: selectedAuxAuthorization,
+        advanceDescription: selectedAuxAdvance?.descricao || selectedAuxAuthorization.advanceDescription || "",
+        prazoDias: selectedAuxAdvance?.prazoDias || selectedAuxAuthorization.prazoDias || 0,
+        dataLimite: selectedAuxAdvance?.dataLimite || selectedAuxAuthorization.dataLimite || ""
+      };
+      if (resent) {
+        await handleResendAuthorization(payload);
+      } else {
+        await handleAuthorize(payload);
+      }
+      setAuxChatAudioFile(null);
+    } catch (error) {
+      setToastType("error");
+      setToastMessage(error.message || "Nao foi possivel atualizar a conversa do auxiliar.");
+    }
+  }
 
   return (
     <main className="dashboard-shell">
@@ -622,19 +678,37 @@ export function TreasurerPage() {
               </div>
 
               {moduleTab === "auxiliar" ? (
-                <div className="timeline">
+                <div className="assistant-chat-list treasurer-chat-list">
                   {assistantUser ? (
-                    authorizations
-                      .filter((item) => item.assistantId === assistantUser?.id)
+                    assistantAuthorizations.length ? (
+                    assistantAuthorizations
                       .map((item) => (
-                        <article key={item.id} className="timeline-item">
-                          <strong>{item.memberName}</strong>
-                          <span>
-                            {formatCurrency(item.amount)} - {item.status}
-                          </span>
-                          <small>{item.description || "Sem observacao adicional."}</small>
-                        </article>
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`assistant-chat-item ${selectedAuxAuthorization?.id === item.id ? "is-active" : ""}`}
+                          onClick={() => setSelectedAuxAuthorizationId(item.id)}
+                        >
+                          <div className="assistant-chat-avatar">{item.memberName.slice(0, 2).toUpperCase()}</div>
+                          <div className="assistant-chat-copy">
+                            <div className="assistant-chat-top">
+                              <strong>{item.memberName}</strong>
+                              <span>{formatDate(item.createdAt)}</span>
+                            </div>
+                            <p>{item.description || "Sem observacao adicional."}</p>
+                            <div className="assistant-chat-meta">
+                              <span>{formatCurrency(item.amount)}</span>
+                              <StatusBadge status={item.status} />
+                            </div>
+                          </div>
+                        </button>
                       ))
+                    ) : (
+                      <article className="timeline-item">
+                        <strong>Nenhuma ordem enviada ainda</strong>
+                        <small>Envie uma autorizacao de repasse para comecar a acompanhar a conversa do auxiliar.</small>
+                      </article>
+                    )
                   ) : (
                     <article className="timeline-item">
                       <strong>Nenhum tesoureiro auxiliar cadastrado</strong>
@@ -727,37 +801,114 @@ export function TreasurerPage() {
               <section className="panel detail-panel">
                 <div className="panel-heading">
                   <div>
-                    <h3>Painel do auxiliar</h3>
-                    <p>Use esta aba para centralizar o acesso do tesoureiro auxiliar.</p>
+                    <h3>Chat com o auxiliar</h3>
+                    <p>Altere a orientacao, envie novo audio e acompanhe cada ordem como uma conversa.</p>
                   </div>
                 </div>
 
-                <div className="detail-grid compact-grid">
-                  <div>
-                    <span>Link publico</span>
-                    <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
+                {selectedAuxAuthorization ? (
+                  <div className="assistant-message-frame treasurer-chat-frame">
+                    <header className="assistant-message-header">
+                      <div className="assistant-chat-avatar large">
+                        {selectedAuxAuthorization.memberName.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="assistant-message-title">
+                        <strong>{selectedAuxAuthorization.memberName}</strong>
+                        <span>{selectedAuxAuthorization.status === "ENTREGUE" ? "Entrega confirmada" : "Aguardando entrega"}</span>
+                      </div>
+                      <StatusBadge status={selectedAuxAuthorization.status} />
+                    </header>
+
+                    <div className="assistant-message-body">
+                      <div className="assistant-date-divider">
+                        <span>{formatDate(selectedAuxAuthorization.createdAt)}</span>
+                      </div>
+
+                      <article className="message-bubble message-bubble-system">
+                        <span className="message-label">Resumo da ordem</span>
+                        <strong className="message-amount">{formatCurrency(selectedAuxAuthorization.amount)}</strong>
+                        <p>{selectedAuxAdvance?.descricao || selectedAuxAuthorization.advanceDescription || "Repasse autorizado pela tesouraria."}</p>
+                        <div className="message-facts">
+                          <span>Prazo: {selectedAuxAdvance?.prazoDias || selectedAuxAuthorization.prazoDias} dias</span>
+                          <span>Vencimento: {formatDate(selectedAuxAdvance?.dataLimite || selectedAuxAuthorization.dataLimite)}</span>
+                        </div>
+                      </article>
+
+                      <article className="message-bubble message-bubble-incoming">
+                        <span className="message-label">Ultima orientacao enviada</span>
+                        <p>{selectedAuxAuthorization.description || "Sem observacao adicional."}</p>
+                      </article>
+
+                      {selectedAuxAuthorization.audioUrl ? (
+                        <article className="message-bubble message-bubble-incoming voice-bubble">
+                          <div className="voice-badge">
+                            <Icon name="mic" size={16} />
+                            <span>Ultimo audio enviado</span>
+                          </div>
+                          <VoiceNotePlayer src={selectedAuxAuthorization.audioUrl} title="Audio enviado ao auxiliar" />
+                          {selectedAuxAuthorization.audioName ? <span className="helper-text">{selectedAuxAuthorization.audioName}</span> : null}
+                        </article>
+                      ) : (
+                        <article className="message-bubble message-bubble-muted">
+                          <span className="message-label">Audio</span>
+                          <p>Nenhum audio enviado para esta ordem ate agora.</p>
+                        </article>
+                      )}
+
+                      {selectedAuxAuthorization.status === "ENTREGUE" ? (
+                        <article className="message-bubble message-bubble-outgoing message-bubble-confirmed">
+                          <span className="message-label">Retorno do auxiliar</span>
+                          <p>O auxiliar marcou esta ordem como entregue no portal.</p>
+                        </article>
+                      ) : (
+                        <article className="message-bubble message-bubble-outgoing">
+                          <span className="message-label">Status atual</span>
+                          <p>Esta ordem continua aberta. Voce pode ajustar a mensagem e reenviar um novo audio a qualquer momento.</p>
+                        </article>
+                      )}
+                    </div>
+
+                    <footer className="assistant-message-composer treasurer-chat-composer">
+                      <div className="treasurer-chat-composer-fields">
+                        <label className="field">
+                          <span>Mensagem para o auxiliar</span>
+                          <textarea
+                            rows="3"
+                            value={auxChatDescription}
+                            onChange={(event) => setAuxChatDescription(event.target.value)}
+                            placeholder="Digite a orientacao que o auxiliar vai ver na conversa"
+                          />
+                        </label>
+
+                        <div className="full-span">
+                          <AudioRecorder onAudioReady={setAuxChatAudioFile} />
+                          {auxChatAudioFile ? <p className="helper-text">Novo audio pronto: {auxChatAudioFile.name}</p> : null}
+                          {!auxChatAudioFile && selectedAuxAuthorization.audioName ? (
+                            <p className="helper-text">Audio atual: {selectedAuxAuthorization.audioName}</p>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="actions-row">
+                        <button type="button" className="button-primary" onClick={() => handleAuxChatSave(false)}>
+                          Salvar orientacao
+                        </button>
+                        <button type="button" className="button-ghost" onClick={() => handleAuxChatSave(true)}>
+                          Reenviar ao auxiliar
+                        </button>
+                        <button type="button" className="button-danger" onClick={() => handleDeleteAuthorization(selectedAuxAuthorization)}>
+                          Excluir ordem
+                        </button>
+                      </div>
+                    </footer>
                   </div>
-                  <div>
-                    <span>PIN</span>
-                    <strong>{assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}</strong>
+                ) : (
+                  <div className="assistant-empty-state">
+                    <div className="assistant-chat-avatar large">+</div>
+                    <h2>Selecione uma ordem</h2>
+                    <p>Escolha uma conversa na lista para editar a orientacao ou enviar novo audio ao auxiliar.</p>
                   </div>
-                  <div>
-                    <span>Ordens abertas</span>
-                    <strong>{authorizations.filter((item) => item.assistantId === assistantUser?.id && item.status !== "ENTREGUE").length}</strong>
-                  </div>
-                  <div>
-                    <span>Ordens concluidas</span>
-                    <strong>{authorizations.filter((item) => item.assistantId === assistantUser?.id && item.status === "ENTREGUE").length}</strong>
-                  </div>
-                  <div>
-                    <span>Status</span>
-                    <strong>{assistantPortalData?.statusLabel || "Ativo"}</strong>
-                  </div>
-                  <div>
-                    <span>Tentativas</span>
-                    <strong>{assistantPortalData?.failedAttempts || 0} / 4</strong>
-                  </div>
-                </div>
+                )}
               </section>
             ) : selectedAdvance ? (
               <section className="panel detail-panel">

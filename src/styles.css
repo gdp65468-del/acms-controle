@@ -533,16 +533,23 @@ a {
   backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding:
+    max(20px, env(safe-area-inset-top))
+    max(20px, env(safe-area-inset-right))
+    max(20px, env(safe-area-inset-bottom))
+    max(20px, env(safe-area-inset-left));
+  overflow: auto;
 }
 
 .files-modal-card {
   width: min(540px, 100%);
+  max-height: min(92vh, 980px);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(247, 250, 255, 0.99));
   border: 1px solid var(--border);
   border-radius: 24px;
   box-shadow: var(--shadow);
   padding: 18px;
+  overflow: auto;
 }
 
 .files-upload-modal {
@@ -878,6 +885,7 @@ a {
   padding: 16px;
   display: grid;
   gap: 14px;
+  overflow: auto;
 }
 
 .files-lightbox-top {
@@ -1102,10 +1110,12 @@ a {
 
 .files-qr-modal {
   width: min(760px, 100%);
+  max-height: min(92vh, 920px);
   background: linear-gradient(180deg, #121b29, #0a1220);
   color: #f5f8ff;
   border-color: rgba(148, 163, 184, 0.18);
   position: relative;
+  overflow: auto;
 }
 
 .files-qr-close {
@@ -1166,6 +1176,7 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px;
   gap: 18px;
+  align-items: start;
 }
 
 .files-qr-copy {
@@ -1204,12 +1215,14 @@ a {
   background: #ffffff;
   display: grid;
   place-items: center;
+  overflow: hidden;
 }
 
 .files-qr-code-box img {
   width: 100%;
   max-width: 258px;
   display: block;
+  height: auto;
 }
 
 .files-qr-code-value {
@@ -1242,6 +1255,8 @@ a {
   display: grid;
   gap: 10px;
   align-content: start;
+  position: sticky;
+  top: 0;
 }
 
 .drive-upload-shell {
@@ -2297,16 +2312,23 @@ textarea {
   min-height: calc(100vh - 36px);
   display: grid;
   place-items: center;
+  padding:
+    max(14px, env(safe-area-inset-top))
+    max(14px, env(safe-area-inset-right))
+    max(14px, env(safe-area-inset-bottom))
+    max(14px, env(safe-area-inset-left));
 }
 
 .assistant-pin-modal {
   width: min(100%, 30rem);
+  max-height: min(92vh, 980px);
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 28px;
   padding: 24px;
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(18px);
+  overflow: auto;
 }
 
 .assistant-pin-modal-header {
@@ -2533,6 +2555,11 @@ textarea {
   overflow-y: auto;
 }
 
+.treasurer-chat-list {
+  padding: 12px 18px 18px;
+  max-height: 760px;
+}
+
 .assistant-chat-item {
   width: 100%;
   max-width: 100%;
@@ -2600,6 +2627,12 @@ textarea {
   background:
     radial-gradient(circle at top, rgba(37, 211, 102, 0.08), transparent 26%),
     linear-gradient(180deg, rgba(250, 253, 255, 1), rgba(242, 247, 252, 1));
+}
+
+.treasurer-chat-frame {
+  min-height: 760px;
+  border-radius: 18px;
+  overflow: hidden;
 }
 
 .assistant-message-title {
@@ -2719,6 +2752,20 @@ textarea {
   border-top: 1px solid rgba(215, 226, 240, 0.95);
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(14px);
+}
+
+.treasurer-chat-composer {
+  display: grid;
+  gap: 14px;
+}
+
+.treasurer-chat-composer-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.treasurer-chat-composer .actions-row {
+  flex-wrap: wrap;
 }
 
 .assistant-send-button {
@@ -3105,6 +3152,15 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .files-qr-actions {
+    position: static;
+  }
+
+  .files-qr-code-box {
+    width: min(260px, 100%);
+    margin: 0 auto;
+  }
+
   .drive-upload-asset-card {
     align-items: stretch;
     flex-direction: column;
@@ -3215,6 +3271,23 @@ textarea {
   .files-qr-modal {
     border-radius: 22px;
     padding: 18px;
+  }
+
+  .files-qr-header {
+    padding-right: 32px;
+  }
+
+  .files-qr-code-box {
+    width: min(220px, 100%);
+    padding: 12px;
+  }
+
+  .files-qr-code-box img {
+    max-width: 196px;
+  }
+
+  .files-qr-meta {
+    grid-template-columns: 1fr;
   }
 
   .assistant-inbox-header,
