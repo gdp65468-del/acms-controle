@@ -6,6 +6,8 @@ const COLLECTIONS = {
   driveUploadSessions: "sessoes_upload_drive",
   fileAssets: "arquivos"
 };
+const DRIVE_UPLOAD_MAX_FAILED_UNLOCKS = 5;
+const DRIVE_UPLOAD_UNLOCK_COOLDOWN_MINUTES = 5;
 
 function sessionRef(sessionId) {
   const adminDb = getAdminDb();
@@ -41,6 +43,15 @@ function sessionResponse(id, data = {}) {
     isExpired: sessionIsExpired(data),
     remainingMs
   };
+}
+
+function getCooldownDate(data = {}) {
+  return data.cooldownUntil?.toDate ? data.cooldownUntil.toDate() : new Date(data.cooldownUntil || 0);
+}
+
+function isUnlockCooldownActive(data = {}) {
+  const cooldownUntil = getCooldownDate(data);
+  return !Number.isNaN(cooldownUntil.getTime()) && cooldownUntil.getTime() > Date.now();
 }
 
 function getDriveFolderName(folderPath = "") {
@@ -94,9 +105,27 @@ export async function unlockDriveUploadSession(sessionId, accessCode) {
   if (sessionIsExpired(data)) {
     throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
   }
+  if (isUnlockCooldownActive(data)) {
+    throw new Error("Muitas tentativas incorretas. Aguarde 5 minutos para tentar novamente.");
+  }
 
   const accessCodeHash = sha256(String(accessCode || "").trim());
   if (accessCodeHash !== String(data.accessCodeHash || "")) {
+    const failedUnlockAttempts = Number(data.failedUnlockAttempts || 0) + 1;
+    const shouldCooldown = failedUnlockAttempts >= DRIVE_UPLOAD_MAX_FAILED_UNLOCKS;
+    await ref.set(
+      {
+        failedUnlockAttempts: shouldCooldown ? 0 : failedUnlockAttempts,
+        lastFailedUnlockAt: Timestamp.now(),
+        cooldownUntil: shouldCooldown
+          ? Timestamp.fromDate(new Date(Date.now() + DRIVE_UPLOAD_UNLOCK_COOLDOWN_MINUTES * 60 * 1000))
+          : null
+      },
+      { merge: true }
+    );
+    if (shouldCooldown) {
+      throw new Error("Muitas tentativas incorretas. Aguarde 5 minutos para tentar novamente.");
+    }
     throw new Error("Codigo de acesso invalido.");
   }
 
@@ -104,7 +133,10 @@ export async function unlockDriveUploadSession(sessionId, accessCode) {
   await ref.set(
     {
       lastActiveAt: Timestamp.now(),
-      expiresAt: Timestamp.fromDate(expiresAt)
+      expiresAt: Timestamp.fromDate(expiresAt),
+      failedUnlockAttempts: 0,
+      lastFailedUnlockAt: null,
+      cooldownUntil: null
     },
     { merge: true }
   );

@@ -10,6 +10,7 @@ const COLLECTIONS = {
 const ASSISTANT_PORTAL_ID = "principal";
 const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 const ASSISTANT_SESSION_HOURS = 8;
+const ASSISTANT_PUBLIC_VERSION_SLICE = 24;
 
 function assistantAccessRef() {
   const adminDb = getAdminDb();
@@ -36,6 +37,22 @@ function sanitizeAccess(data = {}) {
     isBlocked,
     blockedAt: data.blockedAt || "",
     updatedAt: data.updatedAt || ""
+  };
+}
+
+function buildAssistantSessionVersion(data = {}) {
+  return sha256(
+    [String(data.assistantId || ""), String(data.updatedAt || ""), String(data.pinHash || ""), String(data.blockedAt || "")]
+      .filter(Boolean)
+      .join(":")
+  ).slice(0, ASSISTANT_PUBLIC_VERSION_SLICE);
+}
+
+function sanitizePublicAccess(data = {}) {
+  return {
+    configured: Boolean(data.assistantId),
+    assistantName: data.assistantName || "Tesoureiro auxiliar",
+    sessionVersion: buildAssistantSessionVersion(data)
   };
 }
 
@@ -67,14 +84,10 @@ export async function getAssistantPortalPublicState() {
     return {
       configured: false,
       assistantName: "",
-      failedAttempts: 0,
-      remainingAttempts: ASSISTANT_MAX_PIN_ATTEMPTS,
-      isBlocked: false,
-      blockedAt: "",
-      updatedAt: ""
+      sessionVersion: ""
     };
   }
-  return sanitizeAccess(snapshot.data());
+  return sanitizePublicAccess(snapshot.data());
 }
 
 export async function unlockAssistantPortal(pin) {
@@ -106,7 +119,7 @@ export async function unlockAssistantPortal(pin) {
       throw new Error("Acesso bloqueado apos 4 tentativas. Solicite um novo PIN a tesouraria.");
     }
 
-    throw new Error(`PIN invalido. Restam ${ASSISTANT_MAX_PIN_ATTEMPTS - failedAttempts} tentativa(s).`);
+    throw new Error("PIN invalido.");
   }
 
   const token = createSignedToken({
@@ -119,7 +132,10 @@ export async function unlockAssistantPortal(pin) {
 
   return {
     sessionToken: token,
-    portal: sanitizeAccess(data)
+    portal: {
+      ...sanitizeAccess(data),
+      sessionVersion: buildAssistantSessionVersion(data)
+    }
   };
 }
 
@@ -167,6 +183,7 @@ export async function listAssistantOrders(sessionToken) {
       isBlocked: portal.isBlocked,
       blockedAt: portal.blockedAt,
       updatedAt: portal.updatedAt,
+      sessionVersion: buildAssistantSessionVersion(portal),
       statusLabel: portal.isBlocked ? "Bloqueado por tentativas" : "Ativo"
     },
     authorizations

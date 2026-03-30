@@ -258,16 +258,15 @@ function buildAssistantPortalResponse(assistantUser, accessData = {}) {
 }
 
 function mapPublicAssistantPortal(portal = {}) {
-  const failedAttempts = Number(portal.failedAttempts || 0);
-  const isBlocked = Boolean(portal.isBlocked);
   return {
     id: ASSISTANT_PORTAL_ID,
     nome: portal.assistantName || "Tesoureiro auxiliar",
-    failedAttempts,
-    isBlocked,
-    blockedAt: portal.blockedAt || "",
-    updatedAt: portal.updatedAt || "",
-    statusLabel: isBlocked ? "Bloqueado por tentativas" : "Ativo"
+    failedAttempts: 0,
+    isBlocked: false,
+    blockedAt: "",
+    updatedAt: "",
+    sessionVersion: portal.sessionVersion || "",
+    statusLabel: "PIN necessario"
   };
 }
 
@@ -1936,7 +1935,7 @@ export const appService = {
         getAssistantSessionStorageKey(token || ASSISTANT_PORTAL_ID),
         JSON.stringify({
           token: payload.sessionToken,
-          updatedAt: payload.portal?.updatedAt || "",
+          sessionVersion: payload.portal?.sessionVersion || "",
           assistantId: payload.portal?.assistantId || assistantUser.id || ""
         })
       );
@@ -1967,8 +1966,8 @@ export const appService = {
       if (assistantUser?.isBlocked) return false;
       const storedValue = readStoredJson(getAssistantSessionStorageKey(token));
       if (!storedValue?.token) return false;
-      if (!assistantUser?.updatedAt) return true;
-      if (storedValue.updatedAt !== String(assistantUser.updatedAt)) {
+      if (!assistantUser?.sessionVersion) return true;
+      if (storedValue.sessionVersion !== String(assistantUser.sessionVersion)) {
         localStorage.removeItem(getAssistantSessionStorageKey(token));
         return false;
       }
