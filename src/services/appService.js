@@ -1503,7 +1503,7 @@ export const appService = {
       formData.append("audioFile", payload.audioFile, payload.audioFile.name || "audio.webm");
     }
 
-    const response = await fetch("/api/authorizations/save", {
+    const response = await fetch("/api/authorizations", {
       method: "POST",
       headers,
       body: formData,
@@ -1548,7 +1548,7 @@ export const appService = {
       formData.append("audioFile", payload.audioFile, payload.audioFile.name || "audio.webm");
     }
 
-    const response = await fetch("/api/authorizations/save", {
+    const response = await fetch("/api/authorizations", {
       method: "POST",
       headers,
       body: formData,
@@ -1563,7 +1563,7 @@ export const appService = {
       return localDb.deleteAuthorization(authorizationId);
     }
     const headers = await getTreasurerAuthHeaders();
-    await apiRequest("/api/authorizations/delete", {
+    await apiRequest("/api/authorizations", {
       method: "POST",
       headers,
       body: { authorizationId }
