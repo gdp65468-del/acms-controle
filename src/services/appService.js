@@ -1488,82 +1488,29 @@ export const appService = {
         audioName
       });
     }
-    const assistantSnapshot = await getDoc(doc(db, COLLECTIONS.users, payload.assistantId));
-    if (!assistantSnapshot.exists()) {
-      throw new Error("Tesoureiro auxiliar nao encontrado.");
-    }
-    const assistantUser = { id: assistantSnapshot.id, ...assistantSnapshot.data() };
-    let audioUrl = "";
-    let audioName = "";
+    const headers = await getTreasurerAuthHeaders();
+    const formData = new FormData();
+    formData.append("advanceId", String(payload.advanceId || ""));
+    formData.append("assistantId", String(payload.assistantId || ""));
+    formData.append("assistantName", String(payload.assistantName || ""));
+    formData.append("memberName", String(payload.memberName || ""));
+    formData.append("amount", String(payload.amount || 0));
+    formData.append("description", String(payload.description || ""));
+    formData.append("advanceDescription", String(payload.advanceDescription || ""));
+    formData.append("prazoDias", String(payload.prazoDias || 0));
+    formData.append("dataLimite", String(payload.dataLimite || ""));
     if (payload.audioFile) {
-      const fileRef = ref(storage, `audios/${payload.advanceId}/${Date.now()}-${payload.audioFile.name}`);
-      await uploadBytes(fileRef, payload.audioFile);
-      audioUrl = await getDownloadURL(fileRef);
-      audioName = payload.audioFile.name;
+      formData.append("audioFile", payload.audioFile, payload.audioFile.name || "audio.webm");
     }
-    const assistantAccessToken = getAssistantAccessToken(assistantUser);
-    const assistantPin = getAssistantPin(assistantUser);
-    const pinHash = await hashPin(assistantPin);
-    const accessRef = doc(db, COLLECTIONS.assistantAccess, assistantAccessToken);
-    const accessSnapshot = await getDoc(accessRef);
-    const existingAccessData = accessSnapshot.exists() ? accessSnapshot.data() : {};
-    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken: assistantAccessToken });
-    await setDoc(
-      accessRef,
-      buildAssistantPortalRecord(assistantUser, pinHash, {
-        failedAttempts: Number(existingAccessData.failedAttempts || 0),
-        isBlocked: Boolean(existingAccessData.isBlocked),
-        blockedAt: existingAccessData.blockedAt || ""
-      }),
-      { merge: true }
-    );
 
-    const authorizationRef = doc(collection(db, COLLECTIONS.authorizations));
-    const publicCreatedAt = new Date().toISOString();
-    const record = {
-      advanceId: payload.advanceId,
-      assistantId: payload.assistantId,
-      assistantName: payload.assistantName,
-      assistantAccessToken,
-      memberName: payload.memberName,
-      amount: Number(payload.amount),
-      description: payload.description,
-      createdAt: serverTimestamp(),
-      status: "AUTORIZADO",
-      audioUrl,
-      audioName,
-      deliveredAt: "",
-      advanceDescription: payload.advanceDescription || "",
-      prazoDias: Number(payload.prazoDias || 0),
-      dataLimite: payload.dataLimite || ""
-    };
-    const advance = {
-      descricao: payload.advanceDescription || "",
-      prazoDias: Number(payload.prazoDias || 0),
-      dataLimite: payload.dataLimite || ""
-    };
-    const batch = writeBatch(db);
-    batch.set(authorizationRef, record);
-    batch.set(
-      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken, "ordens", authorizationRef.id),
-      buildAssistantPublicOrder(
-        {
-          id: authorizationRef.id,
-          ...record,
-          createdAt: publicCreatedAt
-        },
-        advance
-      )
-    );
-    await batch.commit();
-    await saveHistory(payload.advanceId, "REPASSE_AUTORIZADO", "Repasse autorizado para o tesoureiro auxiliar.");
-    return {
-      id: authorizationRef.id,
-      ...record,
-      assistantAccessToken,
-      assistantPin,
-      assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
-    };
+    const response = await fetch("/api/authorizations/save", {
+      method: "POST",
+      headers,
+      body: formData,
+      cache: "no-store"
+    });
+    const result = await parseApiResponse(response);
+    return result.authorization;
   },
 
   async updateAuthorization(payload, { resent = false } = {}) {
@@ -1584,69 +1531,44 @@ export const appService = {
         { resent }
       );
     }
-
-    const authorizationRef = doc(db, COLLECTIONS.authorizations, payload.authorizationId);
-    const authorizationSnapshot = await getDoc(authorizationRef);
-    if (!authorizationSnapshot.exists()) {
-      throw new Error("Repasse nao encontrado.");
-    }
-
-    const currentAuthorization = { id: authorizationSnapshot.id, ...authorizationSnapshot.data() };
-    let audioUrl = currentAuthorization.audioUrl || "";
-    let audioName = currentAuthorization.audioName || "";
+    const headers = await getTreasurerAuthHeaders();
+    const formData = new FormData();
+    formData.append("authorizationId", String(payload.authorizationId || ""));
+    formData.append("advanceId", String(payload.advanceId || ""));
+    formData.append("assistantId", String(payload.assistantId || ""));
+    formData.append("assistantName", String(payload.assistantName || ""));
+    formData.append("memberName", String(payload.memberName || ""));
+    formData.append("amount", String(payload.amount || 0));
+    formData.append("description", String(payload.description || ""));
+    formData.append("advanceDescription", String(payload.advanceDescription || ""));
+    formData.append("prazoDias", String(payload.prazoDias || 0));
+    formData.append("dataLimite", String(payload.dataLimite || ""));
+    formData.append("resent", resent ? "true" : "false");
     if (payload.audioFile) {
-      const fileRef = ref(storage, `audios/${currentAuthorization.advanceId}/${Date.now()}-${payload.audioFile.name}`);
-      await uploadBytes(fileRef, payload.audioFile);
-      audioUrl = await getDownloadURL(fileRef);
-      audioName = payload.audioFile.name;
+      formData.append("audioFile", payload.audioFile, payload.audioFile.name || "audio.webm");
     }
 
-    const nextRecord = {
-      description: payload.description || "",
-      audioUrl,
-      audioName,
-      status: "AUTORIZADO",
-      deliveredAt: ""
-    };
-
-    const nextAuthorization = { ...currentAuthorization, ...nextRecord };
-    const accessToken = currentAuthorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
-    const batch = writeBatch(db);
-    batch.update(authorizationRef, nextRecord);
-    batch.set(
-      doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", currentAuthorization.id),
-      buildAssistantPublicOrder(nextAuthorization)
-    );
-    await batch.commit();
-    await saveHistory(
-      currentAuthorization.advanceId,
-      resent ? "REPASSE_REENVIADO" : "REPASSE_ATUALIZADO",
-      resent
-        ? "Repasse reenviado para o tesoureiro auxiliar."
-        : "Repasse atualizado para o tesoureiro auxiliar."
-    );
-    return nextAuthorization;
+    const response = await fetch("/api/authorizations/save", {
+      method: "POST",
+      headers,
+      body: formData,
+      cache: "no-store"
+    });
+    const result = await parseApiResponse(response);
+    return result.authorization;
   },
 
   async deleteAuthorization(authorizationId) {
     if (!firebaseEnabled) {
       return localDb.deleteAuthorization(authorizationId);
     }
-
-    const authorizationRef = doc(db, COLLECTIONS.authorizations, authorizationId);
-    const authorizationSnapshot = await getDoc(authorizationRef);
-    if (!authorizationSnapshot.exists()) {
-      throw new Error("Repasse nao encontrado.");
-    }
-
-    const authorization = { id: authorizationSnapshot.id, ...authorizationSnapshot.data() };
-    const accessToken = authorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
-    const batch = writeBatch(db);
-    batch.delete(authorizationRef);
-    batch.delete(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", authorizationId));
-    await batch.commit();
-    await saveHistory(authorization.advanceId, "REPASSE_EXCLUIDO", "Repasse removido da area do auxiliar.");
-    return authorization;
+    const headers = await getTreasurerAuthHeaders();
+    await apiRequest("/api/authorizations/delete", {
+      method: "POST",
+      headers,
+      body: { authorizationId }
+    });
+    return true;
   },
 
   async getAssistantPortalAccess(assistantUser) {
