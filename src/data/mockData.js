@@ -18,7 +18,7 @@ export const mockAuxiliaryUser = {
   email: "auxiliar@igreja.org",
   role: "assistant",
   pin: "1234",
-  accessToken: "auxiliar-acesso-demo"
+  accessToken: "principal"
 };
 
 export const mockUsers = [
@@ -85,7 +85,7 @@ export const mockAuthorizations = [
     advanceId: "ad-1",
     assistantId: "aux-1",
     assistantName: "Tesoureiro Auxiliar",
-    assistantAccessToken: "auxiliar-acesso-demo",
+    assistantAccessToken: "principal",
     memberName: "Carlos Almeida",
     amount: 350,
     description: "Entregar antes do culto de sábado",

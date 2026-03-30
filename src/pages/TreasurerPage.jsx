@@ -20,6 +20,8 @@ export function TreasurerPage() {
   const [detailTab, setDetailTab] = useState("resumo");
   const [sidebarSection, setSidebarSection] = useState("dashboard");
   const [moduleTab, setModuleTab] = useState("pesquisar");
+  const [assistantPortalData, setAssistantPortalData] = useState(null);
+  const [assistantPortalFeedback, setAssistantPortalFeedback] = useState("");
   const topRef = useRef(null);
   const listRef = useRef(null);
   const selectedAdvance = advances.find((item) => item.id === selectedAdvanceId) || advances[0];
@@ -32,6 +34,14 @@ export function TreasurerPage() {
       setSelectedAdvanceId(advances[0].id);
     }
   }, [advances, selectedAdvanceId]);
+
+  useEffect(() => {
+    if (!assistantUser) return;
+    actions
+      .getAssistantPortalAccess(assistantUser)
+      .then((data) => setAssistantPortalData(data))
+      .catch(() => {});
+  }, [actions, assistantUser]);
 
   const totals = useMemo(() => {
     return advances.reduce(
@@ -109,6 +119,27 @@ export function TreasurerPage() {
     await actions.signOutTreasurer();
   }
 
+  async function handlePrepareAssistantPortal() {
+    if (!assistantUser) return;
+    setAssistantPortalFeedback("");
+    try {
+      const data = await actions.getAssistantPortalAccess(assistantUser);
+      setAssistantPortalData(data);
+      setAssistantPortalFeedback("Acesso do auxiliar atualizado com sucesso.");
+    } catch (error) {
+      setAssistantPortalFeedback(error.message);
+    }
+  }
+
+  async function handleCopyAssistantPortal(value, label) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setAssistantPortalFeedback(`${label} copiado com sucesso.`);
+    } catch {
+      setAssistantPortalFeedback(`Nao foi possivel copiar ${label.toLowerCase()}.`);
+    }
+  }
+
   async function handleDeleteAdvance() {
     if (!selectedAdvance) return;
     const confirmed = window.confirm(`Excluir o adiantamento de ${selectedAdvance.usuarioNome}?`);
@@ -145,6 +176,12 @@ export function TreasurerPage() {
       setDetailTab("acms");
       const nextAdvance = advances.find((item) => !item.lancadoAcms);
       if (nextAdvance) setSelectedAdvanceId(nextAdvance.id);
+      scrollToRef(listRef);
+      return;
+    }
+    if (section === "auxiliar") {
+      setModuleTab("auxiliar");
+      setDetailTab("repasse");
       scrollToRef(listRef);
     }
   }
@@ -185,10 +222,14 @@ export function TreasurerPage() {
             <Icon name="folder" size={19} />
             Arquivos
           </Link>
-          <Link className="sidebar-item" to="/auxiliar">
+          <button
+            className={`sidebar-item ${sidebarSection === "auxiliar" ? "is-active" : ""}`}
+            type="button"
+            onClick={() => handleSidebarNavigate("auxiliar")}
+          >
             <Icon name="user" size={19} />
             Auxiliar
-          </Link>
+          </button>
         </nav>
       </aside>
 
@@ -241,17 +282,22 @@ export function TreasurerPage() {
             <Icon name="folder" size={16} />
             Arquivos
           </Link>
-          <Link className="mobile-nav-item" to="/auxiliar">
+          <button
+            className={`mobile-nav-item ${sidebarSection === "auxiliar" ? "is-active" : ""}`}
+            type="button"
+            onClick={() => handleSidebarNavigate("auxiliar")}
+          >
             <Icon name="user" size={16} />
             Auxiliar
-          </Link>
+          </button>
         </section>
 
         <section className="module-tabs panel">
           {[
             ["pesquisar", "Pesquisar"],
             ["adiantamento", "Adiantamento"],
-            ["acms", "Controle ACMS"]
+            ["acms", "Controle ACMS"],
+            ["auxiliar", "Auxiliar"]
           ].map(([value, label]) => (
             <button
               key={value}
@@ -262,6 +308,8 @@ export function TreasurerPage() {
                 if (value === "acms") {
                   setActiveFilter("ACMS_PENDENTE");
                   setDetailTab("acms");
+                } else if (value === "auxiliar") {
+                  setDetailTab("repasse");
                 } else if (value === "pesquisar") {
                   setActiveFilter("TODOS");
                   setDetailTab("resumo");
@@ -293,18 +341,94 @@ export function TreasurerPage() {
               />
             ) : null}
 
+            {moduleTab === "auxiliar" ? (
+              <section className="panel form-grid compact section-panel">
+                <div className="panel-heading">
+                  <div>
+                    <h3>Acesso do tesoureiro auxiliar</h3>
+                    <p>Gere e copie o link fixo com PIN para o auxiliar entrar quando quiser.</p>
+                  </div>
+                </div>
+
+                <div className="detail-grid compact-grid">
+                  <div>
+                    <span>Link do auxiliar</span>
+                    <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
+                  </div>
+                  <div>
+                    <span>PIN atual</span>
+                    <strong>{assistantPortalData?.assistantPin || assistantUser?.pin || "1234"}</strong>
+                  </div>
+                </div>
+
+                <div className="actions-row">
+                  <button className="button-primary" type="button" onClick={handlePrepareAssistantPortal}>
+                    Gerar ou atualizar acesso
+                  </button>
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() => handleCopyAssistantPortal(assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`, "Link")}
+                  >
+                    Copiar link
+                  </button>
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() => handleCopyAssistantPortal(String(assistantPortalData?.assistantPin || assistantUser?.pin || "1234"), "PIN")}
+                  >
+                    Copiar PIN
+                  </button>
+                  <a className="button-ghost" href="/auxiliar" target="_blank" rel="noreferrer">
+                    Abrir area do auxiliar
+                  </a>
+                </div>
+
+                {assistantPortalFeedback ? <p className="helper-text full-span">{assistantPortalFeedback}</p> : null}
+
+                <div className="callout-box full-span">
+                  <strong>Como funciona agora</strong>
+                  <p>O auxiliar usa sempre o mesmo link em <strong>/auxiliar</strong> e o mesmo PIN.</p>
+                  <p>As novas autorizacoes de repasse aparecem todas nessa mesma area, sem precisar de link por adiantamento.</p>
+                </div>
+              </section>
+            ) : null}
+
             <section ref={listRef} className="panel list-panel">
               <div className="panel-heading">
                 <div>
-                  <h3>{moduleTab === "acms" ? "Pendencias de lancamento ACMS" : "Pesquisar adiantamentos"}</h3>
+                  <h3>
+                    {moduleTab === "acms"
+                      ? "Pendencias de lancamento ACMS"
+                      : moduleTab === "auxiliar"
+                        ? "Ordens enviadas ao auxiliar"
+                        : "Pesquisar adiantamentos"}
+                  </h3>
                   <p>
                     {moduleTab === "acms"
                       ? "Veja apenas os registros que ainda precisam ser lancados no ACMS."
+                      : moduleTab === "auxiliar"
+                        ? "Acompanhe as autorizacoes de repasse ja liberadas para o auxiliar."
                       : "Acompanhe situacao, valor e o que ainda falta lancar no ACMS."}
                   </p>
                 </div>
               </div>
 
+              {moduleTab === "auxiliar" ? (
+                <div className="timeline">
+                  {authorizations
+                    .filter((item) => item.assistantId === assistantUser?.id)
+                    .map((item) => (
+                      <article key={item.id} className="timeline-item">
+                        <strong>{item.memberName}</strong>
+                        <span>
+                          {formatCurrency(item.amount)} - {item.status}
+                        </span>
+                        <small>{item.description || "Sem observacao adicional."}</small>
+                      </article>
+                    ))}
+                </div>
+              ) : (
               <div className="list-toolbar">
                 <div className="search-wrap">
                   <Icon name="search" size={18} className="search-icon" />
@@ -340,10 +464,12 @@ export function TreasurerPage() {
                     >
                       {label}
                     </button>
-                  ))}
+                    ))}
                 </div>
               </div>
+              )}
 
+              {moduleTab !== "auxiliar" ? (
               <div className="list-table">
                 {groupedAdvances.map((group) => (
                   <section key={group.key} className="list-group">
@@ -378,11 +504,40 @@ export function TreasurerPage() {
                   </section>
                 ))}
               </div>
+              ) : null}
             </section>
           </div>
 
           <aside className="detail-column">
-            {selectedAdvance ? (
+            {moduleTab === "auxiliar" ? (
+              <section className="panel detail-panel">
+                <div className="panel-heading">
+                  <div>
+                    <h3>Painel do auxiliar</h3>
+                    <p>Use esta aba para centralizar o acesso do tesoureiro auxiliar.</p>
+                  </div>
+                </div>
+
+                <div className="detail-grid compact-grid">
+                  <div>
+                    <span>Link publico</span>
+                    <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
+                  </div>
+                  <div>
+                    <span>PIN</span>
+                    <strong>{assistantPortalData?.assistantPin || assistantUser?.pin || "1234"}</strong>
+                  </div>
+                  <div>
+                    <span>Ordens abertas</span>
+                    <strong>{authorizations.filter((item) => item.assistantId === assistantUser?.id && item.status !== "ENTREGUE").length}</strong>
+                  </div>
+                  <div>
+                    <span>Ordens concluidas</span>
+                    <strong>{authorizations.filter((item) => item.assistantId === assistantUser?.id && item.status === "ENTREGUE").length}</strong>
+                  </div>
+                </div>
+              </section>
+            ) : selectedAdvance ? (
               <section className="panel detail-panel">
                 <div className="panel-heading">
                   <div>

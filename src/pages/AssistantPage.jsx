@@ -7,6 +7,7 @@ import { useAppContext } from "../context/AppContext";
 import { formatCurrency, formatDate } from "../utils/format";
 
 const FONT_SCALE_KEY = "acms-assistant-font-scale";
+const ASSISTANT_PORTAL_ID = "principal";
 
 function PinGate({ assistantUser, accessToken, onUnlock }) {
   const [pin, setPin] = useState("");
@@ -51,6 +52,7 @@ function PinGate({ assistantUser, accessToken, onUnlock }) {
 export function AssistantPage() {
   const { token } = useParams();
   const { actions } = useAppContext();
+  const accessToken = token || ASSISTANT_PORTAL_ID;
   const [assistantUser, setAssistantUser] = useState(null);
   const [authorizations, setAuthorizations] = useState([]);
   const [loadingAccess, setLoadingAccess] = useState(true);
@@ -66,21 +68,14 @@ export function AssistantPage() {
   }, [authorizations, assistantUser]);
 
   useEffect(() => {
-    if (!token) {
-      setAssistantUser(null);
-      setAuthorizations([]);
-      setLoadingAccess(false);
-      return undefined;
-    }
-
     setLoadingAccess(true);
-    const unsubscribe = actions.subscribeAssistantAccess(token, (data) => {
+    const unsubscribe = actions.subscribeAssistantAccess(accessToken, (data) => {
       setAssistantUser(data.assistantUser || null);
       setAuthorizations(data.authorizations || []);
       setLoadingAccess(false);
     });
     return () => unsubscribe?.();
-  }, [actions, token]);
+  }, [actions, accessToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -118,17 +113,6 @@ export function AssistantPage() {
     localStorage.setItem(FONT_SCALE_KEY, String(normalized));
   }
 
-  if (!token) {
-    return (
-      <main className="assistant-shell dark-shell">
-        <section className="assistant-card large-ui assistant-panel">
-          <h1>Link do auxiliar necessario</h1>
-          <p>Abra a area do auxiliar pelo link enviado pela tesouraria junto com o PIN.</p>
-        </section>
-      </main>
-    );
-  }
-
   if (loadingAccess) {
     return (
       <main className="assistant-shell dark-shell">
@@ -151,8 +135,8 @@ export function AssistantPage() {
     );
   }
 
-  if (!actions.isAssistantUnlocked(token)) {
-    return <PinGate assistantUser={assistantUser} accessToken={token} onUnlock={actions.unlockAssistant} />;
+  if (!actions.isAssistantUnlocked(accessToken)) {
+    return <PinGate assistantUser={assistantUser} accessToken={accessToken} onUnlock={actions.unlockAssistant} />;
   }
 
   return (
@@ -176,7 +160,7 @@ export function AssistantPage() {
                   A+
                 </button>
               </div>
-              <button className="button-ghost assistant-lock-button" onClick={() => actions.lockAssistant(token)}>
+              <button className="button-ghost assistant-lock-button" onClick={() => actions.lockAssistant(accessToken)}>
                 <Icon name="lock" size={16} />
               </button>
             </div>
@@ -301,7 +285,7 @@ export function AssistantPage() {
                 <button
                   className="button-primary button-large assistant-send-button"
                   disabled={selectedAuthorization.status === "ENTREGUE"}
-                  onClick={() => actions.markAuthorizationDelivered(selectedAuthorization, token)}
+                  onClick={() => actions.markAuthorizationDelivered(selectedAuthorization, accessToken)}
                 >
                   <Icon name="check" size={18} />
                   <span>

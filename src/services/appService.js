@@ -31,6 +31,8 @@ const COLLECTIONS = {
   fileAssets: "arquivos"
 };
 
+const ASSISTANT_PORTAL_ID = "principal";
+
 async function saveHistory(advanceId, type, message) {
   await addDoc(collection(db, COLLECTIONS.history), {
     advanceId,
@@ -62,8 +64,8 @@ async function hashPin(pin) {
     .join("");
 }
 
-function getAssistantAccessToken(assistantUser) {
-  return String(assistantUser?.accessToken || "");
+function getAssistantAccessToken() {
+  return ASSISTANT_PORTAL_ID;
 }
 
 function buildAssistantPublicOrder(authorization, advance = null) {
@@ -165,13 +167,11 @@ function getFolderDescendantIds(folders, folderId) {
 }
 
 async function syncAssistantAccessInFirebase({ assistantUser, authorization, advance }) {
-  const accessToken = getAssistantAccessToken(assistantUser) || crypto.randomUUID();
+  const accessToken = getAssistantAccessToken(assistantUser);
   const assistantPin = getAssistantPin(assistantUser);
   const pinHash = await hashPin(assistantPin);
 
-  if (!getAssistantAccessToken(assistantUser)) {
-    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken });
-  }
+  await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken });
 
   await setDoc(
     doc(db, COLLECTIONS.assistantAccess, accessToken),
@@ -791,8 +791,57 @@ export const appService = {
       ...record,
       assistantAccessToken: access.accessToken,
       assistantPin: access.assistantPin,
-      assistantLink:
-        typeof window !== "undefined" ? `${window.location.origin}/auxiliar/${access.accessToken}` : `/auxiliar/${access.accessToken}`
+      assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
+    };
+  },
+
+  async getAssistantPortalAccess(assistantUser) {
+    if (!assistantUser) {
+      throw new Error("Cadastre um tesoureiro auxiliar para gerar o acesso.");
+    }
+
+    const assistantLink = typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
+    const assistantPin = getAssistantPin(assistantUser);
+    const assistantAccessToken = getAssistantAccessToken(assistantUser);
+
+    if (!firebaseEnabled) {
+      return {
+        assistantLink,
+        assistantPin,
+        assistantAccessToken
+      };
+    }
+
+    const pinHash = await hashPin(assistantPin);
+    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken: assistantAccessToken });
+    await setDoc(
+      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken),
+      {
+        assistantId: assistantUser.id,
+        assistantName: assistantUser.nome,
+        pinHash,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    const existingAuthorizations = await getDocs(
+      query(collection(db, COLLECTIONS.authorizations), where("assistantId", "==", assistantUser.id))
+    );
+    await Promise.all(
+      existingAuthorizations.docs.map((item) => {
+        const authorization = { id: item.id, ...item.data(), assistantAccessToken };
+        return setDoc(
+          doc(db, COLLECTIONS.assistantAccess, assistantAccessToken, "ordens", item.id),
+          buildAssistantPublicOrder(authorization)
+        );
+      })
+    );
+
+    return {
+      assistantLink,
+      assistantPin,
+      assistantAccessToken
     };
   },
 
@@ -861,10 +910,7 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.subscribeAssistantAccess(token, callback);
     }
-    if (!token) {
-      callback({ assistantUser: null, authorizations: [] });
-      return () => {};
-    }
+    const resolvedToken = token || ASSISTANT_PORTAL_ID;
 
     const state = { assistantUser: null, authorizations: [] };
     const emit = () =>
@@ -873,12 +919,12 @@ export const appService = {
         authorizations: [...state.authorizations]
       });
 
-    const accessRef = doc(db, COLLECTIONS.assistantAccess, token);
-    const ordersRef = collection(db, COLLECTIONS.assistantAccess, token, "ordens");
+    const accessRef = doc(db, COLLECTIONS.assistantAccess, resolvedToken);
+    const ordersRef = collection(db, COLLECTIONS.assistantAccess, resolvedToken, "ordens");
     const unsubAccess = onSnapshot(
       accessRef,
       (snapshot) => {
-        state.assistantUser = snapshot.exists() ? { id: snapshot.id, ...snapshot.data(), accessToken: token } : null;
+        state.assistantUser = snapshot.exists() ? { id: snapshot.id, ...snapshot.data(), accessToken: resolvedToken } : null;
         emit();
       },
       () => {
@@ -912,15 +958,15 @@ export const appService = {
     if (providedHash !== expectedHash) {
       throw new Error("PIN invalido.");
     }
-    localStorage.setItem(`acms-assistant-unlocked:${token || assistantUser.accessToken || "default"}`, "true");
+    localStorage.setItem(`acms-assistant-unlocked:${token || assistantUser.accessToken || ASSISTANT_PORTAL_ID}`, "true");
     return true;
   },
 
-  isAssistantUnlocked(token = "default") {
+  isAssistantUnlocked(token = ASSISTANT_PORTAL_ID) {
     return localStorage.getItem(`acms-assistant-unlocked:${token}`) === "true";
   },
 
-  lockAssistant(token = "default") {
+  lockAssistant(token = ASSISTANT_PORTAL_ID) {
     localStorage.removeItem(`acms-assistant-unlocked:${token}`);
   }
 };

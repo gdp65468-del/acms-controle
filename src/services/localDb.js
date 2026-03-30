@@ -11,6 +11,7 @@ import {
 import { computeAdvanceStatus, computeDueDate } from "../utils/format";
 
 const STORAGE_KEY = "acms-local-db";
+const ASSISTANT_PORTAL_ID = "principal";
 
 function clone(data) {
   return JSON.parse(JSON.stringify(data));
@@ -61,6 +62,12 @@ function readStore() {
     currentUser: clone(mockCurrentUser),
     assistantUser: clone(mockAuxiliaryUser)
   };
+  if (parsed.session.assistantUser) {
+    parsed.session.assistantUser.accessToken ||= ASSISTANT_PORTAL_ID;
+  }
+  parsed.users = parsed.users.map((item) =>
+    item.role === "assistant" ? { ...item, accessToken: item.accessToken || ASSISTANT_PORTAL_ID } : item
+  );
   return parsed;
 }
 
@@ -121,7 +128,8 @@ function getFolderDescendantIds(folders, folderId) {
 }
 
 function getAssistantByToken(store, token) {
-  return store.users.find((item) => item.role === "assistant" && String(item.accessToken || "") === String(token || ""));
+  const resolvedToken = String(token || ASSISTANT_PORTAL_ID);
+  return store.users.find((item) => item.role === "assistant" && String(item.accessToken || ASSISTANT_PORTAL_ID) === resolvedToken);
 }
 
 function getAssistantAccessSnapshot(store, token) {
@@ -150,9 +158,9 @@ export const localDb = {
   },
 
   subscribeAssistantAccess(token, callback) {
-    const handler = () => callback(getAssistantAccessSnapshot(readStore(), token));
+    const handler = () => callback(getAssistantAccessSnapshot(readStore(), token || ASSISTANT_PORTAL_ID));
     window.addEventListener("acms-local-updated", handler);
-    callback(getAssistantAccessSnapshot(readStore(), token));
+    callback(getAssistantAccessSnapshot(readStore(), token || ASSISTANT_PORTAL_ID));
     return () => window.removeEventListener("acms-local-updated", handler);
   },
 
@@ -492,8 +500,8 @@ export const localDb = {
   createAuthorization(payload) {
       const store = readStore();
       const assistantUser = store.users.find((item) => item.id === payload.assistantId);
-      const accessToken = assistantUser?.accessToken || generateId("aux-link");
-      if (assistantUser && !assistantUser.accessToken) {
+      const accessToken = ASSISTANT_PORTAL_ID;
+      if (assistantUser) {
         assistantUser.accessToken = accessToken;
       }
       const authorization = {
@@ -521,10 +529,32 @@ export const localDb = {
       return {
         ...authorization,
         assistantPin: assistantUser?.pin || "1234",
-        assistantLink:
-          typeof window !== "undefined" ? `${window.location.origin}/auxiliar/${accessToken}` : `/auxiliar/${accessToken}`
+        assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
       };
     },
+
+    getAssistantPortalAccess(assistantUser) {
+    const store = readStore();
+    const targetAssistant =
+      assistantUser || store.users.find((item) => item.role === "assistant") || store.session.assistantUser || null;
+    if (!targetAssistant) {
+      throw new Error("Cadastre um tesoureiro auxiliar para gerar o acesso.");
+    }
+    const storedAssistant = store.users.find((item) => item.id === targetAssistant.id);
+    if (storedAssistant) {
+      storedAssistant.accessToken = ASSISTANT_PORTAL_ID;
+    }
+    if (store.session.assistantUser?.id === targetAssistant.id) {
+      store.session.assistantUser.accessToken = ASSISTANT_PORTAL_ID;
+    }
+    writeStore(store);
+    notify();
+    return {
+      assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar",
+      assistantPin: targetAssistant.pin || "1234",
+      assistantAccessToken: ASSISTANT_PORTAL_ID
+    };
+  },
 
     markAuthorizationDelivered(id) {
     const store = readStore();
