@@ -1928,6 +1928,110 @@ textarea {
   overflow-x: hidden;
 }
 
+.assistant-pin-shell {
+  position: relative;
+}
+
+.assistant-pin-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at top left, rgba(37, 211, 102, 0.14), transparent 26rem),
+    radial-gradient(circle at bottom right, rgba(18, 140, 126, 0.12), transparent 24rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 247, 255, 0.96));
+  pointer-events: none;
+}
+
+.assistant-pin-backdrop {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100vh - 36px);
+  display: grid;
+  place-items: center;
+}
+
+.assistant-pin-modal {
+  width: min(100%, 30rem);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 28px;
+  padding: 24px;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.assistant-pin-modal-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.assistant-pin-modal-header h1 {
+  margin: 4px 0 8px;
+  font-size: calc(1.9rem * var(--assistant-font-scale));
+}
+
+.assistant-pin-modal-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.assistant-pin-modal-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(37, 211, 102, 0.2), rgba(18, 140, 126, 0.14));
+  color: #128c7e;
+}
+
+.assistant-pin-form {
+  gap: 12px;
+}
+
+.assistant-pin-label {
+  display: block;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.assistant-pin-form input {
+  text-align: center;
+  letter-spacing: 0.45rem;
+  font-size: calc(1.7rem * var(--assistant-font-scale));
+  font-weight: 700;
+  border-radius: 16px;
+  min-height: 64px;
+}
+
+.assistant-pin-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.assistant-pin-helper {
+  margin-top: 14px;
+}
+
+.assistant-pin-counter {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--text);
+  font-size: calc(0.84rem * var(--assistant-font-scale));
+  font-weight: 700;
+}
+
+.assistant-pin-helper .helper-text {
+  margin-top: 12px;
+}
+
 .assistant-card {
   padding: 22px;
 }
@@ -2692,6 +2796,35 @@ textarea {
 
   .pin-form input {
     font-size: 1.6rem;
+  }
+
+  .assistant-pin-backdrop {
+    min-height: calc(100vh - 20px);
+  }
+
+  .assistant-pin-modal {
+    width: 100%;
+    border-radius: 22px;
+    padding: 18px;
+  }
+
+  .assistant-pin-modal-header {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .assistant-pin-modal-icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  .assistant-pin-modal-header h1 {
+    font-size: calc(1.55rem * var(--assistant-font-scale));
+  }
+
+  .assistant-pin-form input {
+    font-size: calc(1.45rem * var(--assistant-font-scale));
+    letter-spacing: 0.35rem;
   }
 
   .assistant-shell {

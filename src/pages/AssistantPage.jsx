@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
@@ -12,6 +12,11 @@ const ASSISTANT_PORTAL_ID = "principal";
 function PinGate({ assistantUser, accessToken, onUnlock }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
+  const pinInputRef = useRef(null);
+
+  useEffect(() => {
+    pinInputRef.current?.focus();
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -24,37 +29,60 @@ function PinGate({ assistantUser, accessToken, onUnlock }) {
   }
 
   return (
-    <main className="assistant-shell dark-shell">
-      <section className="assistant-card large-ui assistant-panel">
-        <span className="eyebrow">Area do tesoureiro auxiliar</span>
-        <h1>Entrar com PIN</h1>
-        <p>Use o PIN de 4 digitos para abrir suas ordens autorizadas.</p>
-        {assistantUser?.isBlocked ? (
-          <div className="callout-box assistant-blocked-callout">
-            <strong>Acesso bloqueado</strong>
-            <p>Este acesso foi bloqueado por 4 tentativas incorretas. Solicite um novo PIN a tesouraria.</p>
+    <main className="assistant-shell dark-shell assistant-pin-shell">
+      <section className="assistant-pin-backdrop">
+        <article className="assistant-pin-modal">
+          <div className="assistant-pin-modal-header">
+            <div className="assistant-pin-modal-icon">
+              <Icon name="lock" size={20} />
+            </div>
+            <div>
+              <span className="eyebrow">Area do tesoureiro auxiliar</span>
+              <h1>Digite o PIN de acesso</h1>
+              <p>Use o PIN de 4 digitos enviado pela tesouraria para abrir suas ordens.</p>
+            </div>
           </div>
-        ) : null}
-        <form className="pin-form" onSubmit={handleSubmit}>
-          <input
-            inputMode="numeric"
-            maxLength="4"
-            pattern="[0-9]*"
-            value={pin}
-            onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
-            placeholder="0000"
-            disabled={assistantUser?.isBlocked}
-          />
-          <button className="button-primary" type="submit" disabled={assistantUser?.isBlocked}>
-            Entrar
-          </button>
-        </form>
-        {error ? <p className="form-error">{error}</p> : null}
-        {!assistantUser?.isBlocked ? (
-          <p className="helper-text">
-            Se errar o PIN 4 vezes, o acesso sera bloqueado e a tesouraria precisara gerar um novo.
-          </p>
-        ) : null}
+
+          {assistantUser?.isBlocked ? (
+            <div className="callout-box assistant-blocked-callout">
+              <strong>Acesso bloqueado</strong>
+              <p>Este acesso foi bloqueado por 4 tentativas incorretas. Solicite um novo PIN a tesouraria.</p>
+            </div>
+          ) : null}
+
+          <form className="pin-form assistant-pin-form" onSubmit={handleSubmit}>
+            <label className="assistant-pin-label" htmlFor="assistant-pin-input">
+              PIN de acesso
+            </label>
+            <input
+              id="assistant-pin-input"
+              ref={pinInputRef}
+              inputMode="numeric"
+              maxLength="4"
+              pattern="[0-9]*"
+              value={pin}
+              onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
+              placeholder="0000"
+              disabled={assistantUser?.isBlocked}
+            />
+            <button className="button-primary assistant-pin-submit" type="submit" disabled={assistantUser?.isBlocked}>
+              Entrar na area do auxiliar
+            </button>
+          </form>
+
+          {error ? <p className="form-error">{error}</p> : null}
+
+          <div className="assistant-pin-helper">
+            <span className="assistant-pin-counter">
+              Tentativas disponiveis: {Math.max(0, 4 - Number(assistantUser?.failedAttempts || 0))} de 4
+            </span>
+            {!assistantUser?.isBlocked ? (
+              <p className="helper-text">
+                Se errar o PIN 4 vezes, o acesso sera bloqueado e a tesouraria precisara gerar um novo.
+              </p>
+            ) : null}
+          </div>
+        </article>
       </section>
     </main>
   );
