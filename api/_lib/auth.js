@@ -8,15 +8,33 @@ export async function requireTreasurer(req) {
 
   const idToken = header.slice("Bearer ".length).trim();
   const decoded = await adminAuth.verifyIdToken(idToken);
-  const userSnapshot = await adminDb.collection("usuarios").doc(decoded.uid).get();
+  const usersCollection = adminDb.collection("usuarios");
+  let profile = null;
 
-  if (!userSnapshot.exists || userSnapshot.data()?.role !== "treasurer") {
+  const userSnapshot = await usersCollection.doc(decoded.uid).get();
+  if (userSnapshot.exists && userSnapshot.data()?.role === "treasurer") {
+    profile = userSnapshot.data() || {};
+  }
+
+  if (!profile && decoded.email) {
+    const byEmailSnapshot = await usersCollection
+      .where("email", "==", decoded.email)
+      .where("role", "==", "treasurer")
+      .limit(1)
+      .get();
+
+    if (!byEmailSnapshot.empty) {
+      profile = byEmailSnapshot.docs[0].data() || {};
+    }
+  }
+
+  if (!profile) {
     throw new Error("Acesso restrito a tesouraria.");
   }
 
   return {
     uid: decoded.uid,
     email: decoded.email || "",
-    profile: userSnapshot.data() || {}
+    profile
   };
 }
