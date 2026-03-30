@@ -1657,16 +1657,21 @@ export const appService = {
       return localDb.getAssistantPortalAccess(assistantUser);
     }
 
-    const assistantAccessToken = getAssistantAccessToken(assistantUser);
-    const assistantPin = getAssistantPin(assistantUser);
-    const pinHash = await hashPin(assistantPin);
+    const assistantDocRef = doc(db, COLLECTIONS.users, assistantUser.id);
+    const assistantDocSnapshot = await getDoc(assistantDocRef);
+    const latestAssistantUser = assistantDocSnapshot.exists()
+      ? { id: assistantDocSnapshot.id, ...assistantDocSnapshot.data() }
+      : assistantUser;
+    const assistantAccessToken = getAssistantAccessToken(latestAssistantUser);
+    const assistantPin = getAssistantPin(latestAssistantUser);
     const accessRef = doc(db, COLLECTIONS.assistantAccess, assistantAccessToken);
     const accessSnapshot = await getDoc(accessRef);
     const existingData = accessSnapshot.exists() ? accessSnapshot.data() : {};
-    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken: assistantAccessToken });
+    const pinHash = existingData.pinHash || (await hashPin(assistantPin));
+    await updateDoc(assistantDocRef, { accessToken: assistantAccessToken });
     await setDoc(
       accessRef,
-      buildAssistantPortalRecord(assistantUser, pinHash, {
+      buildAssistantPortalRecord(latestAssistantUser, pinHash, {
         failedAttempts: Number(existingData.failedAttempts || 0),
         isBlocked: Boolean(existingData.isBlocked),
         blockedAt: existingData.blockedAt || "",
@@ -1688,7 +1693,7 @@ export const appService = {
       })
     );
 
-    return buildAssistantPortalResponse(assistantUser, existingData);
+    return buildAssistantPortalResponse(latestAssistantUser, existingData);
   },
 
   async updateAssistantPortalPin(assistantUser, nextPin) {
