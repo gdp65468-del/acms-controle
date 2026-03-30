@@ -9,7 +9,6 @@ export function AuthorizationForm({ advance, assistantUser, existingAuthorizatio
   useEffect(() => {
     setDescription(existingAuthorization?.description || "");
     setAudioFile(null);
-    setFeedback("");
   }, [existingAuthorization?.id, existingAuthorization?.description]);
 
   async function handleSubmit(event) {
@@ -32,7 +31,7 @@ export function AuthorizationForm({ advance, assistantUser, existingAuthorizatio
       });
       setDescription("");
       setAudioFile(null);
-      setFeedback("Repasse autorizado com sucesso.");
+      setFeedback("Autorizacao de repasse enviada com sucesso.");
     } catch (error) {
       setFeedback(error.message);
     }
@@ -81,10 +80,10 @@ export function AuthorizationForm({ advance, assistantUser, existingAuthorizatio
     <form className="panel form-grid compact section-panel" onSubmit={handleSubmit}>
       <div className="panel-heading">
         <div>
-          <h3>{existingAuthorization ? "Editar repasse" : "Autorizar repasse"}</h3>
+          <h3>{existingAuthorization ? "Editar autorizacao de repasse" : "Enviar autorizacao de repasse"}</h3>
           <p>
             {existingAuthorization
-              ? "Atualize a observacao, reenvie ao auxiliar ou exclua este repasse."
+              ? "Atualize a observacao, reenvie ao auxiliar ou exclua esta autorizacao."
               : "Envie uma instrucao simples para o tesoureiro auxiliar."}
           </p>
         </div>
@@ -117,7 +116,7 @@ export function AuthorizationForm({ advance, assistantUser, existingAuthorizatio
 
       <div className="full-span actions-row">
         <button className="button-primary" type="submit">
-          {existingAuthorization ? "Salvar alteracoes" : "Autorizar repasse"}
+          {existingAuthorization ? "Salvar alteracoes da autorizacao" : "Enviar autorizacao de repasse"}
         </button>
         {existingAuthorization ? (
           <>

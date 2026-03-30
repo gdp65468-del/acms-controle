@@ -937,11 +937,30 @@ export const appService = {
       audioUrl = await getDownloadURL(fileRef);
       audioName = payload.audioFile.name;
     }
+    const assistantAccessToken = getAssistantAccessToken(assistantUser);
+    const assistantPin = getAssistantPin(assistantUser);
+    const pinHash = await hashPin(assistantPin);
+    const accessRef = doc(db, COLLECTIONS.assistantAccess, assistantAccessToken);
+    const accessSnapshot = await getDoc(accessRef);
+    const existingAccessData = accessSnapshot.exists() ? accessSnapshot.data() : {};
+    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken: assistantAccessToken });
+    await setDoc(
+      accessRef,
+      buildAssistantPortalRecord(assistantUser, pinHash, {
+        failedAttempts: Number(existingAccessData.failedAttempts || 0),
+        isBlocked: Boolean(existingAccessData.isBlocked),
+        blockedAt: existingAccessData.blockedAt || ""
+      }),
+      { merge: true }
+    );
+
+    const authorizationRef = doc(collection(db, COLLECTIONS.authorizations));
+    const publicCreatedAt = new Date().toISOString();
     const record = {
       advanceId: payload.advanceId,
       assistantId: payload.assistantId,
       assistantName: payload.assistantName,
-      assistantAccessToken: getAssistantAccessToken(assistantUser),
+      assistantAccessToken,
       memberName: payload.memberName,
       amount: Number(payload.amount),
       description: payload.description,
@@ -954,23 +973,31 @@ export const appService = {
       prazoDias: Number(payload.prazoDias || 0),
       dataLimite: payload.dataLimite || ""
     };
-    const docRef = await addDoc(collection(db, COLLECTIONS.authorizations), record);
     const advance = {
       descricao: payload.advanceDescription || "",
       prazoDias: Number(payload.prazoDias || 0),
       dataLimite: payload.dataLimite || ""
     };
-    const access = await syncAssistantAccessInFirebase({
-      assistantUser,
-      authorization: { id: docRef.id, ...record, createdAt: new Date().toISOString() },
-      advance
-    });
+    const batch = writeBatch(db);
+    batch.set(authorizationRef, record);
+    batch.set(
+      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken, "ordens", authorizationRef.id),
+      buildAssistantPublicOrder(
+        {
+          id: authorizationRef.id,
+          ...record,
+          createdAt: publicCreatedAt
+        },
+        advance
+      )
+    );
+    await batch.commit();
     await saveHistory(payload.advanceId, "REPASSE_AUTORIZADO", "Repasse autorizado para o tesoureiro auxiliar.");
     return {
-      id: docRef.id,
+      id: authorizationRef.id,
       ...record,
-      assistantAccessToken: access.accessToken,
-      assistantPin: access.assistantPin,
+      assistantAccessToken,
+      assistantPin,
       assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
     };
   },
@@ -1018,13 +1045,15 @@ export const appService = {
       deliveredAt: ""
     };
 
-    await updateDoc(authorizationRef, nextRecord);
     const nextAuthorization = { ...currentAuthorization, ...nextRecord };
     const accessToken = currentAuthorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
-    await setDoc(
+    const batch = writeBatch(db);
+    batch.update(authorizationRef, nextRecord);
+    batch.set(
       doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", currentAuthorization.id),
       buildAssistantPublicOrder(nextAuthorization)
     );
+    await batch.commit();
     await saveHistory(
       currentAuthorization.advanceId,
       resent ? "REPASSE_REENVIADO" : "REPASSE_ATUALIZADO",
@@ -1047,9 +1076,11 @@ export const appService = {
     }
 
     const authorization = { id: authorizationSnapshot.id, ...authorizationSnapshot.data() };
-    await deleteDoc(authorizationRef);
     const accessToken = authorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
-    await deleteDoc(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", authorizationId));
+    const batch = writeBatch(db);
+    batch.delete(authorizationRef);
+    batch.delete(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", authorizationId));
+    await batch.commit();
     await saveHistory(authorization.advanceId, "REPASSE_EXCLUIDO", "Repasse removido da area do auxiliar.");
     return authorization;
   },
