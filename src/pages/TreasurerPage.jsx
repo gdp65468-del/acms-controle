@@ -98,7 +98,7 @@ export function TreasurerPage() {
   }
 
   async function handleAuthorize(payload) {
-    await actions.createAuthorization(payload);
+    return actions.createAuthorization(payload);
   }
 
   async function handleToggleAcmsLaunch(advance, launched) {

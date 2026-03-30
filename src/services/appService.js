@@ -9,6 +9,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch
@@ -25,6 +26,7 @@ const COLLECTIONS = {
   advances: "adiantamentos",
   history: "historico_eventos",
   authorizations: "autorizacoes_repasse",
+  assistantAccess: "acesso_auxiliar",
   fileFolders: "pastas_arquivos",
   fileAssets: "arquivos"
 };
@@ -48,6 +50,39 @@ function mapAdvance(id, data) {
 
 function getAssistantPin(assistantUser) {
   return String(assistantUser?.pin || "1234");
+}
+
+async function hashPin(pin) {
+  const value = String(pin || "");
+  if (!value) return "";
+  const encoded = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getAssistantAccessToken(assistantUser) {
+  return String(assistantUser?.accessToken || "");
+}
+
+function buildAssistantPublicOrder(authorization, advance = null) {
+  return {
+    authorizationId: authorization.id,
+    advanceId: authorization.advanceId,
+    memberName: authorization.memberName,
+    amount: Number(authorization.amount || 0),
+    description: authorization.description || "",
+    createdAt: authorization.createdAt || new Date().toISOString(),
+    status: authorization.status || "AUTORIZADO",
+    audioUrl: authorization.audioUrl || "",
+    audioName: authorization.audioName || "",
+    deliveredAt: authorization.deliveredAt || "",
+    advanceDescription: authorization.advanceDescription || advance?.descricao || "",
+    prazoDias: Number(authorization.prazoDias || advance?.prazoDias || 0),
+    dataLimite: authorization.dataLimite || advance?.dataLimite || "",
+    assistantAccessToken: authorization.assistantAccessToken || ""
+  };
 }
 
 function fileToDataUrl(file) {
@@ -127,6 +162,34 @@ function getFolderDescendantIds(folders, folderId) {
     });
   }
   return descendants;
+}
+
+async function syncAssistantAccessInFirebase({ assistantUser, authorization, advance }) {
+  const accessToken = getAssistantAccessToken(assistantUser) || crypto.randomUUID();
+  const assistantPin = getAssistantPin(assistantUser);
+  const pinHash = await hashPin(assistantPin);
+
+  if (!getAssistantAccessToken(assistantUser)) {
+    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken });
+  }
+
+  await setDoc(
+    doc(db, COLLECTIONS.assistantAccess, accessToken),
+    {
+      assistantId: assistantUser.id,
+      assistantName: assistantUser.nome,
+      pinHash,
+      updatedAt: new Date().toISOString()
+    },
+    { merge: true }
+  );
+
+  await setDoc(
+    doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", authorization.id),
+    buildAssistantPublicOrder({ ...authorization, assistantAccessToken: accessToken }, advance)
+  );
+
+  return { accessToken, assistantPin };
 }
 
 export const appService = {
@@ -681,6 +744,11 @@ export const appService = {
         audioName
       });
     }
+    const assistantSnapshot = await getDoc(doc(db, COLLECTIONS.users, payload.assistantId));
+    if (!assistantSnapshot.exists()) {
+      throw new Error("Tesoureiro auxiliar nao encontrado.");
+    }
+    const assistantUser = { id: assistantSnapshot.id, ...assistantSnapshot.data() };
     let audioUrl = "";
     let audioName = "";
     if (payload.audioFile) {
@@ -693,6 +761,7 @@ export const appService = {
       advanceId: payload.advanceId,
       assistantId: payload.assistantId,
       assistantName: payload.assistantName,
+      assistantAccessToken: getAssistantAccessToken(assistantUser),
       memberName: payload.memberName,
       amount: Number(payload.amount),
       description: payload.description,
@@ -700,14 +769,34 @@ export const appService = {
       status: "AUTORIZADO",
       audioUrl,
       audioName,
-      deliveredAt: ""
+      deliveredAt: "",
+      advanceDescription: payload.advanceDescription || "",
+      prazoDias: Number(payload.prazoDias || 0),
+      dataLimite: payload.dataLimite || ""
     };
     const docRef = await addDoc(collection(db, COLLECTIONS.authorizations), record);
+    const advance = {
+      descricao: payload.advanceDescription || "",
+      prazoDias: Number(payload.prazoDias || 0),
+      dataLimite: payload.dataLimite || ""
+    };
+    const access = await syncAssistantAccessInFirebase({
+      assistantUser,
+      authorization: { id: docRef.id, ...record, createdAt: new Date().toISOString() },
+      advance
+    });
     await saveHistory(payload.advanceId, "REPASSE_AUTORIZADO", "Repasse autorizado para o tesoureiro auxiliar.");
-    return { id: docRef.id, ...record };
+    return {
+      id: docRef.id,
+      ...record,
+      assistantAccessToken: access.accessToken,
+      assistantPin: access.assistantPin,
+      assistantLink:
+        typeof window !== "undefined" ? `${window.location.origin}/auxiliar/${access.accessToken}` : `/auxiliar/${access.accessToken}`
+    };
   },
 
-  async markAuthorizationDelivered(authorization) {
+  async markAuthorizationDelivered(authorization, accessToken = "") {
     if (!firebaseEnabled) {
       return localDb.markAuthorizationDelivered(authorization.id);
     }
@@ -715,6 +804,13 @@ export const appService = {
       status: "ENTREGUE",
       deliveredAt: new Date().toISOString()
     });
+    const resolvedToken = accessToken || authorization.assistantAccessToken || "";
+    if (resolvedToken) {
+      await updateDoc(doc(db, COLLECTIONS.assistantAccess, resolvedToken, "ordens", authorization.authorizationId || authorization.id), {
+        status: "ENTREGUE",
+        deliveredAt: new Date().toISOString()
+      });
+    }
     await saveHistory(
       authorization.advanceId,
       "REPASSE_ENTREGUE",
@@ -761,23 +857,70 @@ export const appService = {
     await batch.commit();
   },
 
-  async unlockAssistant(pin, assistantUser) {
+  subscribeAssistantAccess(token, callback) {
+    if (!firebaseEnabled) {
+      return localDb.subscribeAssistantAccess(token, callback);
+    }
+    if (!token) {
+      callback({ assistantUser: null, authorizations: [] });
+      return () => {};
+    }
+
+    const state = { assistantUser: null, authorizations: [] };
+    const emit = () =>
+      callback({
+        assistantUser: state.assistantUser ? { ...state.assistantUser } : null,
+        authorizations: [...state.authorizations]
+      });
+
+    const accessRef = doc(db, COLLECTIONS.assistantAccess, token);
+    const ordersRef = collection(db, COLLECTIONS.assistantAccess, token, "ordens");
+    const unsubAccess = onSnapshot(
+      accessRef,
+      (snapshot) => {
+        state.assistantUser = snapshot.exists() ? { id: snapshot.id, ...snapshot.data(), accessToken: token } : null;
+        emit();
+      },
+      () => {
+        state.assistantUser = null;
+        emit();
+      }
+    );
+    const unsubOrders = onSnapshot(
+      ordersRef,
+      (snapshot) => {
+        state.authorizations = sortByDateDesc(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })), "createdAt");
+        emit();
+      },
+      () => {
+        state.authorizations = [];
+        emit();
+      }
+    );
+    return () => {
+      unsubAccess();
+      unsubOrders();
+    };
+  },
+
+  async unlockAssistant(pin, assistantUser, token = "") {
     if (!assistantUser) {
       throw new Error("Nenhum usuario auxiliar configurado.");
     }
-    const expectedPin = getAssistantPin(assistantUser);
-    if (String(pin) !== expectedPin) {
+    const expectedHash = assistantUser.pinHash || (await hashPin(getAssistantPin(assistantUser)));
+    const providedHash = await hashPin(pin);
+    if (providedHash !== expectedHash) {
       throw new Error("PIN invalido.");
     }
-    localStorage.setItem("acms-assistant-unlocked", "true");
+    localStorage.setItem(`acms-assistant-unlocked:${token || assistantUser.accessToken || "default"}`, "true");
     return true;
   },
 
-  isAssistantUnlocked() {
-    return localStorage.getItem("acms-assistant-unlocked") === "true";
+  isAssistantUnlocked(token = "default") {
+    return localStorage.getItem(`acms-assistant-unlocked:${token}`) === "true";
   },
 
-  lockAssistant() {
-    localStorage.removeItem("acms-assistant-unlocked");
+  lockAssistant(token = "default") {
+    localStorage.removeItem(`acms-assistant-unlocked:${token}`);
   }
 };

@@ -44,5 +44,30 @@ service cloud.firestore {
     match /arquivos/{fileId} {
       allow read, create, update, delete: if isTreasurer();
     }
+
+    match /acesso_auxiliar/{token} {
+      allow read: if true;
+      allow create, update, delete: if isTreasurer();
+
+      match /ordens/{orderId} {
+        allow read: if true;
+        allow create, delete: if isTreasurer();
+        allow update: if isTreasurer() || (
+          !signedIn() &&
+          request.resource.data.authorizationId == resource.data.authorizationId &&
+          request.resource.data.advanceId == resource.data.advanceId &&
+          request.resource.data.memberName == resource.data.memberName &&
+          request.resource.data.amount == resource.data.amount &&
+          request.resource.data.description == resource.data.description &&
+          request.resource.data.audioUrl == resource.data.audioUrl &&
+          request.resource.data.audioName == resource.data.audioName &&
+          request.resource.data.advanceDescription == resource.data.advanceDescription &&
+          request.resource.data.prazoDias == resource.data.prazoDias &&
+          request.resource.data.dataLimite == resource.data.dataLimite &&
+          request.resource.data.assistantAccessToken == resource.data.assistantAccessToken &&
+          request.resource.data.status == "ENTREGUE"
+        );
+      }
+    }
   }
 }

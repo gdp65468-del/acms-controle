@@ -120,11 +120,39 @@ function getFolderDescendantIds(folders, folderId) {
   return descendants;
 }
 
+function getAssistantByToken(store, token) {
+  return store.users.find((item) => item.role === "assistant" && String(item.accessToken || "") === String(token || ""));
+}
+
+function getAssistantAccessSnapshot(store, token) {
+  const assistantUser = getAssistantByToken(store, token) || null;
+  if (!assistantUser) {
+    return { assistantUser: null, authorizations: [] };
+  }
+
+  const authorizations = store.authorizations
+    .filter((item) => item.assistantId === assistantUser.id)
+    .map((item) => ({
+      id: item.id,
+      authorizationId: item.id,
+      ...item
+    }));
+
+  return { assistantUser, authorizations };
+}
+
 export const localDb = {
   subscribe(callback) {
     const handler = () => callback(localDb.getSnapshot());
     window.addEventListener("acms-local-updated", handler);
     callback(localDb.getSnapshot());
+    return () => window.removeEventListener("acms-local-updated", handler);
+  },
+
+  subscribeAssistantAccess(token, callback) {
+    const handler = () => callback(getAssistantAccessSnapshot(readStore(), token));
+    window.addEventListener("acms-local-updated", handler);
+    callback(getAssistantAccessSnapshot(readStore(), token));
     return () => window.removeEventListener("acms-local-updated", handler);
   },
 
@@ -462,29 +490,43 @@ export const localDb = {
   },
 
   createAuthorization(payload) {
-    const store = readStore();
-    const authorization = {
-      id: generateId("auth"),
-      advanceId: payload.advanceId,
-      assistantId: payload.assistantId,
-      assistantName: payload.assistantName,
-      memberName: payload.memberName,
-      amount: Number(payload.amount),
-      description: payload.description,
-      createdAt: new Date().toISOString(),
-      status: "AUTORIZADO",
-      audioUrl: payload.audioUrl || "",
-      audioName: payload.audioName || "",
-      deliveredAt: ""
-    };
-    store.authorizations.unshift(authorization);
-    saveHistory(store, payload.advanceId, "REPASSE_AUTORIZADO", "Repasse autorizado para o tesoureiro auxiliar.");
-    writeStore(store);
-    notify();
-    return authorization;
-  },
+      const store = readStore();
+      const assistantUser = store.users.find((item) => item.id === payload.assistantId);
+      const accessToken = assistantUser?.accessToken || generateId("aux-link");
+      if (assistantUser && !assistantUser.accessToken) {
+        assistantUser.accessToken = accessToken;
+      }
+      const authorization = {
+        id: generateId("auth"),
+        advanceId: payload.advanceId,
+        assistantId: payload.assistantId,
+        assistantName: payload.assistantName,
+        assistantAccessToken: accessToken,
+        memberName: payload.memberName,
+        amount: Number(payload.amount),
+        description: payload.description,
+        createdAt: new Date().toISOString(),
+        status: "AUTORIZADO",
+        audioUrl: payload.audioUrl || "",
+        audioName: payload.audioName || "",
+        deliveredAt: "",
+        advanceDescription: payload.advanceDescription || "",
+        prazoDias: Number(payload.prazoDias || 0),
+        dataLimite: payload.dataLimite || ""
+      };
+      store.authorizations.unshift(authorization);
+      saveHistory(store, payload.advanceId, "REPASSE_AUTORIZADO", "Repasse autorizado para o tesoureiro auxiliar.");
+      writeStore(store);
+      notify();
+      return {
+        ...authorization,
+        assistantPin: assistantUser?.pin || "1234",
+        assistantLink:
+          typeof window !== "undefined" ? `${window.location.origin}/auxiliar/${accessToken}` : `/auxiliar/${accessToken}`
+      };
+    },
 
-  markAuthorizationDelivered(id) {
+    markAuthorizationDelivered(id) {
     const store = readStore();
     const authorization = store.authorizations.find((item) => item.id === id);
     if (!authorization) throw new Error("Autorização não encontrada.");

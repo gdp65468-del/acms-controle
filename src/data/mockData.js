@@ -17,7 +17,8 @@ export const mockAuxiliaryUser = {
   nome: "Tesoureiro Auxiliar",
   email: "auxiliar@igreja.org",
   role: "assistant",
-  pin: "1234"
+  pin: "1234",
+  accessToken: "auxiliar-acesso-demo"
 };
 
 export const mockUsers = [
@@ -84,6 +85,7 @@ export const mockAuthorizations = [
     advanceId: "ad-1",
     assistantId: "aux-1",
     assistantName: "Tesoureiro Auxiliar",
+    assistantAccessToken: "auxiliar-acesso-demo",
     memberName: "Carlos Almeida",
     amount: 350,
     description: "Entregar antes do culto de sábado",
@@ -91,7 +93,10 @@ export const mockAuthorizations = [
     status: "AUTORIZADO",
     audioUrl: "",
     audioName: "",
-    deliveredAt: ""
+    deliveredAt: "",
+    advanceDescription: "Compra de materiais para aÃ§Ã£o social",
+    prazoDias: 15,
+    dataLimite: addDays(15)
   }
 ];
 

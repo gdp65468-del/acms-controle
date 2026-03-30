@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
 import { VoiceNotePlayer } from "../components/VoiceNotePlayer";
@@ -7,7 +8,7 @@ import { formatCurrency, formatDate } from "../utils/format";
 
 const FONT_SCALE_KEY = "acms-assistant-font-scale";
 
-function PinGate({ assistantUser, onUnlock }) {
+function PinGate({ assistantUser, accessToken, onUnlock }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
 
@@ -15,7 +16,7 @@ function PinGate({ assistantUser, onUnlock }) {
     event.preventDefault();
     setError("");
     try {
-      await onUnlock(pin, assistantUser);
+      await onUnlock(pin, assistantUser, accessToken);
     } catch (unlockError) {
       setError(unlockError.message);
     }
@@ -48,8 +49,11 @@ function PinGate({ assistantUser, onUnlock }) {
 }
 
 export function AssistantPage() {
-  const { authorizations, session, advances, actions } = useAppContext();
-  const assistantUser = session.assistantUser;
+  const { token } = useParams();
+  const { actions } = useAppContext();
+  const [assistantUser, setAssistantUser] = useState(null);
+  const [authorizations, setAuthorizations] = useState([]);
+  const [loadingAccess, setLoadingAccess] = useState(true);
   const [selectedAuthorizationId, setSelectedAuthorizationId] = useState("");
   const [fontScale, setFontScale] = useState(() => Number(localStorage.getItem(FONT_SCALE_KEY) || 1));
   const [isMobileView, setIsMobileView] = useState(() =>
@@ -58,8 +62,25 @@ export function AssistantPage() {
 
   const assignedAuthorizations = useMemo(() => {
     if (!assistantUser) return [];
-    return authorizations.filter((item) => item.assistantId === assistantUser.id);
+    return authorizations;
   }, [authorizations, assistantUser]);
+
+  useEffect(() => {
+    if (!token) {
+      setAssistantUser(null);
+      setAuthorizations([]);
+      setLoadingAccess(false);
+      return undefined;
+    }
+
+    setLoadingAccess(true);
+    const unsubscribe = actions.subscribeAssistantAccess(token, (data) => {
+      setAssistantUser(data.assistantUser || null);
+      setAuthorizations(data.authorizations || []);
+      setLoadingAccess(false);
+    });
+    return () => unsubscribe?.();
+  }, [actions, token]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -88,8 +109,8 @@ export function AssistantPage() {
     setSelectedAuthorizationId((current) => current || assignedAuthorizations[0].id);
   }, [assignedAuthorizations, selectedAuthorizationId, isMobileView]);
 
-  const selectedAuthorization = assignedAuthorizations.find((item) => item.id === selectedAuthorizationId) || null;
-  const advance = advances.find((item) => item.id === selectedAuthorization?.advanceId);
+  const selectedAuthorization =
+    assignedAuthorizations.find((item) => (item.authorizationId || item.id) === selectedAuthorizationId) || null;
 
   function updateFontScale(nextValue) {
     const normalized = Math.min(1.3, Math.max(0.9, Number(nextValue.toFixed(2))));
@@ -97,19 +118,41 @@ export function AssistantPage() {
     localStorage.setItem(FONT_SCALE_KEY, String(normalized));
   }
 
-  if (!assistantUser) {
+  if (!token) {
     return (
       <main className="assistant-shell dark-shell">
         <section className="assistant-card large-ui assistant-panel">
-          <h1>Area do auxiliar indisponivel</h1>
-          <p>Cadastre um usuario com papel `assistant` para liberar esta area no Firebase.</p>
+          <h1>Link do auxiliar necessario</h1>
+          <p>Abra a area do auxiliar pelo link enviado pela tesouraria junto com o PIN.</p>
         </section>
       </main>
     );
   }
 
-  if (!actions.isAssistantUnlocked()) {
-    return <PinGate assistantUser={assistantUser} onUnlock={actions.unlockAssistant} />;
+  if (loadingAccess) {
+    return (
+      <main className="assistant-shell dark-shell">
+        <section className="assistant-card large-ui assistant-panel">
+          <h1>Carregando acesso do auxiliar</h1>
+          <p>Aguarde enquanto buscamos as ordens autorizadas.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!assistantUser) {
+    return (
+      <main className="assistant-shell dark-shell">
+        <section className="assistant-card large-ui assistant-panel">
+          <h1>Link do auxiliar invalido</h1>
+          <p>Peça para a tesouraria gerar novamente o link de acesso com PIN.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!actions.isAssistantUnlocked(token)) {
+    return <PinGate assistantUser={assistantUser} accessToken={token} onUnlock={actions.unlockAssistant} />;
   }
 
   return (
@@ -133,7 +176,7 @@ export function AssistantPage() {
                   A+
                 </button>
               </div>
-              <button className="button-ghost assistant-lock-button" onClick={() => actions.lockAssistant()}>
+              <button className="button-ghost assistant-lock-button" onClick={() => actions.lockAssistant(token)}>
                 <Icon name="lock" size={16} />
               </button>
             </div>
@@ -204,13 +247,13 @@ export function AssistantPage() {
                   <p>{selectedAuthorization.description || "Repasse autorizado pela tesouraria."}</p>
                 </article>
 
-                {advance ? (
+                {selectedAuthorization?.advanceDescription ? (
                   <article className="message-bubble message-bubble-system">
                     <span className="message-label">Finalidade</span>
-                    <p>{advance.descricao}</p>
+                    <p>{selectedAuthorization.advanceDescription}</p>
                     <div className="message-facts">
-                      <span>Prazo: {advance.prazoDias} dias</span>
-                      <span>Vencimento: {formatDate(advance.dataLimite)}</span>
+                      <span>Prazo: {selectedAuthorization.prazoDias} dias</span>
+                      <span>Vencimento: {formatDate(selectedAuthorization.dataLimite)}</span>
                     </div>
                   </article>
                 ) : null}
@@ -258,7 +301,7 @@ export function AssistantPage() {
                 <button
                   className="button-primary button-large assistant-send-button"
                   disabled={selectedAuthorization.status === "ENTREGUE"}
-                  onClick={() => actions.markAuthorizationDelivered(selectedAuthorization)}
+                  onClick={() => actions.markAuthorizationDelivered(selectedAuthorization, token)}
                 >
                   <Icon name="check" size={18} />
                   <span>

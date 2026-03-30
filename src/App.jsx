@@ -21,6 +21,7 @@ export default function App() {
         <Route path="/app" element={<ProtectedTreasurerRoute element={<TreasurerPage />} />} />
         <Route path="/arquivos" element={<ProtectedTreasurerRoute element={<FilesPage />} />} />
         <Route path="/auxiliar" element={<AssistantPage />} />
+        <Route path="/auxiliar/:token" element={<AssistantPage />} />
         <Route path="/publico/:token" element={<PublicAdvancePage />} />
       </Routes>
     </AppProvider>
