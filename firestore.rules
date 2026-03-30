@@ -1,0 +1,41 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isTreasurer() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == "treasurer";
+    }
+
+    function isAssistant() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == "assistant";
+    }
+
+    match /usuarios/{userId} {
+      allow read: if signedIn();
+      allow write: if isTreasurer();
+    }
+
+    match /adiantamentos/{advanceId} {
+      allow read: if signedIn();
+      allow create, update: if isTreasurer();
+    }
+
+    match /autorizacoes_repasse/{authorizationId} {
+      allow read: if isTreasurer() || isAssistant();
+      allow create: if isTreasurer();
+      allow update: if isTreasurer() || isAssistant();
+    }
+
+    match /historico_eventos/{historyId} {
+      allow read: if signedIn();
+      allow create: if isTreasurer() || isAssistant();
+      allow update, delete: if false;
+    }
+  }
+}
