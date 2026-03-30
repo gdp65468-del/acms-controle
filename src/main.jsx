@@ -17,6 +17,17 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
 
 const updateSW = registerSW({
   immediate: true,
+  onRegisteredSW(_, registration) {
+    if (!registration || typeof window === "undefined") return;
+
+    const checkForUpdates = () => registration.update().catch(() => {});
+    window.addEventListener("focus", checkForUpdates);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        checkForUpdates();
+      }
+    });
+  },
   onNeedRefresh() {
     updateSW(true);
   }

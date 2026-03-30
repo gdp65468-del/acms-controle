@@ -68,7 +68,8 @@ async function apiRequest(path, { method = "GET", body, headers = {}, isFormData
   const response = await fetch(path, {
     method,
     headers: requestHeaders,
-    body: requestBody
+    body: requestBody,
+    cache: "no-store"
   });
   return parseApiResponse(response);
 }
