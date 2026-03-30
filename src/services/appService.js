@@ -110,7 +110,7 @@ function mapAdvance(id, data) {
 }
 
 function getAssistantPin(assistantUser) {
-  return String(assistantUser?.pin || "1234");
+  return String(assistantUser?.pin || "");
 }
 
 function normalizeAssistantPin(pin) {

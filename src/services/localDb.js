@@ -338,7 +338,7 @@ export const localDb = {
     notify();
     return {
       assistantLink: getAssistantPortalLink(),
-      assistantPin: targetAssistant.pin || "1234",
+      assistantPin: targetAssistant.pin || "",
       assistantAccessToken: ASSISTANT_PORTAL_ID,
       failedAttempts: Number(store.assistantAccess.failedAttempts || 0),
       isBlocked: Boolean(store.assistantAccess.isBlocked),
@@ -347,7 +347,7 @@ export const localDb = {
       shareMessage: buildAssistantShareMessage({
         assistantName: targetAssistant.nome,
         assistantLink: getAssistantPortalLink(),
-        assistantPin: targetAssistant.pin || "1234"
+        assistantPin: targetAssistant.pin || ""
       })
     };
   },
@@ -1039,7 +1039,7 @@ export const localDb = {
       notify();
       return {
         ...authorization,
-        assistantPin: assistantUser?.pin || "1234",
+        assistantPin: assistantUser?.pin || "",
         assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
       };
   },

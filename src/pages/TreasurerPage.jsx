@@ -599,7 +599,7 @@ export function TreasurerPage() {
                       <button
                         className="button-ghost"
                         type="button"
-                        onClick={() => handleCopyAssistantPortal(String(assistantPortalData?.assistantPin || assistantUser?.pin || "1234"), "PIN")}
+                        onClick={() => handleCopyAssistantPortal(String(assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || ""), "PIN")}
                       >
                         Copiar PIN
                       </button>
@@ -609,7 +609,7 @@ export function TreasurerPage() {
                         onClick={() =>
                           handleCopyAssistantPortal(
                             assistantPortalData?.shareMessage ||
-                              `Acesso do Tesoureiro Auxiliar\n\nLink: ${assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}\nPIN: ${assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}`,
+                              `Acesso do Tesoureiro Auxiliar\n\nLink: ${assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}\nPIN: ${assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || ""}`,
                             "Mensagem"
                           )
                         }
