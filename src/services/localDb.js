@@ -394,6 +394,52 @@ export const localDb = {
     return member;
   },
 
+  createAssistantProfile(payload) {
+    const store = readStore();
+    const normalizedName = String(payload.nome || "").trim();
+    const normalizedPin = String(payload.pin || "")
+      .replace(/\D/g, "")
+      .slice(0, 4);
+
+    if (!normalizedName) {
+      throw new Error("Informe o nome do tesoureiro auxiliar.");
+    }
+
+    if (normalizedPin.length !== 4) {
+      throw new Error("Informe um PIN de 4 digitos para o auxiliar.");
+    }
+
+    let assistant = store.users.find((item) => item.role === "assistant") || null;
+    if (assistant) {
+      assistant.nome = normalizedName;
+      assistant.pin = normalizedPin;
+      assistant.accessToken = ASSISTANT_PORTAL_ID;
+    } else {
+      assistant = {
+        id: generateId("assistant"),
+        nome: normalizedName,
+        email: "",
+        role: "assistant",
+        pin: normalizedPin,
+        accessToken: ASSISTANT_PORTAL_ID
+      };
+      store.users.push(assistant);
+    }
+
+    store.session.assistantUser = { ...assistant };
+    updateAssistantAccessState(store, {
+      assistantId: assistant.id,
+      assistantName: assistant.nome,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: ""
+    });
+    writeStore(store);
+    localStorage.removeItem(`acms-assistant-unlocked:${ASSISTANT_PORTAL_ID}`);
+    notify();
+    return { ...assistant };
+  },
+
   deleteMember(memberId) {
     const store = readStore();
     const member = store.users.find((item) => item.id === memberId && item.role === "member");

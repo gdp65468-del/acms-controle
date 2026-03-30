@@ -518,6 +518,68 @@ export const appService = {
     return { id: docRef.id, ...record };
   },
 
+  async createAssistantProfile(payload) {
+    const normalizedName = String(payload.nome || "").trim();
+    const normalizedPin = normalizeAssistantPin(payload.pin);
+
+    if (!normalizedName) {
+      throw new Error("Informe o nome do tesoureiro auxiliar.");
+    }
+
+    if (normalizedPin.length !== 4) {
+      throw new Error("Informe um PIN de 4 digitos para o auxiliar.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.createAssistantProfile({ nome: normalizedName, pin: normalizedPin });
+    }
+
+    const existingAssistants = await getDocs(query(collection(db, COLLECTIONS.users), where("role", "==", "assistant")));
+    let assistantUser = null;
+
+    if (!existingAssistants.empty) {
+      const existingAssistant = existingAssistants.docs[0];
+      await updateDoc(doc(db, COLLECTIONS.users, existingAssistant.id), {
+        nome: normalizedName,
+        pin: normalizedPin,
+        accessToken: ASSISTANT_PORTAL_ID
+      });
+      assistantUser = {
+        id: existingAssistant.id,
+        ...existingAssistant.data(),
+        nome: normalizedName,
+        pin: normalizedPin,
+        accessToken: ASSISTANT_PORTAL_ID
+      };
+    } else {
+      const record = {
+        nome: normalizedName,
+        email: "",
+        role: "assistant",
+        pin: normalizedPin,
+        accessToken: ASSISTANT_PORTAL_ID,
+        createdAt: serverTimestamp()
+      };
+      const docRef = await addDoc(collection(db, COLLECTIONS.users), record);
+      assistantUser = { id: docRef.id, ...record };
+    }
+
+    const pinHash = await hashPin(normalizedPin);
+    await setDoc(
+      doc(db, COLLECTIONS.assistantAccess, ASSISTANT_PORTAL_ID),
+      buildAssistantPortalRecord(
+        {
+          ...assistantUser,
+          pin: normalizedPin
+        },
+        pinHash
+      ),
+      { merge: true }
+    );
+
+    return assistantUser;
+  },
+
   async deleteMember(memberId) {
     if (!firebaseEnabled) {
       return localDb.deleteMember(memberId);

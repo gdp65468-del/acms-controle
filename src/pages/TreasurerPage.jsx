@@ -23,6 +23,7 @@ export function TreasurerPage() {
   const [assistantPortalData, setAssistantPortalData] = useState(null);
   const [assistantPortalFeedback, setAssistantPortalFeedback] = useState("");
   const [assistantPinDraft, setAssistantPinDraft] = useState("");
+  const [assistantSetupName, setAssistantSetupName] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [toastType, setToastType] = useState("success");
   const topRef = useRef(null);
@@ -48,6 +49,10 @@ export function TreasurerPage() {
       })
       .catch(() => {});
   }, [actions, assistantUser]);
+
+  useEffect(() => {
+    setAssistantSetupName(assistantUser?.nome || "");
+  }, [assistantUser?.id, assistantUser?.nome]);
 
   useEffect(() => {
     if (!toastMessage) return undefined;
@@ -210,6 +215,27 @@ export function TreasurerPage() {
       setAssistantPortalFeedback("Novo PIN salvo com sucesso. O acesso do auxiliar foi liberado.");
       setToastType("success");
       setToastMessage("Novo PIN salvo com sucesso.");
+    } catch (error) {
+      setAssistantPortalFeedback(error.message);
+      setToastType("error");
+      setToastMessage(error.message);
+    }
+  }
+
+  async function handleCreateAssistantProfile() {
+    setAssistantPortalFeedback("");
+    try {
+      const assistant = await actions.createAssistantProfile({
+        nome: assistantSetupName,
+        pin: assistantPinDraft
+      });
+      const data = await actions.getAssistantPortalAccess(assistant);
+      setAssistantPortalData(data);
+      setAssistantPinDraft(data.assistantPin || "");
+      setAssistantSetupName(assistant.nome || "");
+      setAssistantPortalFeedback("Tesoureiro auxiliar cadastrado com sucesso.");
+      setToastType("success");
+      setToastMessage("Tesoureiro auxiliar cadastrado com sucesso.");
     } catch (error) {
       setAssistantPortalFeedback(error.message);
       setToastType("error");
@@ -443,84 +469,134 @@ export function TreasurerPage() {
                 <div className="panel-heading">
                   <div>
                     <h3>Acesso do tesoureiro auxiliar</h3>
-                    <p>Gere e copie o link fixo com PIN para o auxiliar entrar quando quiser.</p>
+                    <p>
+                      {assistantUser
+                        ? "Gere e copie o link fixo com PIN para o auxiliar entrar quando quiser."
+                        : "Cadastre o tesoureiro auxiliar para liberar repasses, audio e acesso ao portal."}
+                    </p>
                   </div>
                 </div>
 
-                <div className="detail-grid compact-grid">
-                  <div>
-                    <span>Link do auxiliar</span>
-                    <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
-                  </div>
-                  <div>
-                    <span>Status do acesso</span>
-                    <strong>{assistantPortalData?.statusLabel || "Ativo"}</strong>
-                  </div>
-                  <div>
-                    <span>Tentativas incorretas</span>
-                    <strong>{assistantPortalData?.failedAttempts || 0} / 4</strong>
-                  </div>
-                  <div>
-                    <span>Ultima atualizacao</span>
-                    <strong>{assistantPortalData?.updatedAt ? formatDate(assistantPortalData.updatedAt) : "Agora"}</strong>
-                  </div>
-                </div>
+                {assistantUser ? (
+                  <>
+                    <div className="detail-grid compact-grid">
+                      <div>
+                        <span>Link do auxiliar</span>
+                        <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
+                      </div>
+                      <div>
+                        <span>Status do acesso</span>
+                        <strong>{assistantPortalData?.statusLabel || "Aguardando configuracao"}</strong>
+                      </div>
+                      <div>
+                        <span>Tentativas incorretas</span>
+                        <strong>{assistantPortalData?.failedAttempts || 0} / 4</strong>
+                      </div>
+                      <div>
+                        <span>Ultima atualizacao</span>
+                        <strong>{assistantPortalData?.updatedAt ? formatDate(assistantPortalData.updatedAt) : "-"}</strong>
+                      </div>
+                    </div>
 
-                <label className="full-span">
-                  Novo PIN do auxiliar
-                  <input
-                    inputMode="numeric"
-                    maxLength="4"
-                    value={assistantPinDraft}
-                    onChange={(event) => setAssistantPinDraft(event.target.value.replace(/\D/g, ""))}
-                    placeholder="Digite 4 numeros"
-                  />
-                </label>
+                    <label className="full-span">
+                      Nome do auxiliar
+                      <input
+                        value={assistantSetupName}
+                        onChange={(event) => setAssistantSetupName(event.target.value)}
+                        placeholder="Ex.: Tesoureiro auxiliar"
+                      />
+                    </label>
 
-                <div className="actions-row">
-                  <button className="button-primary" type="button" onClick={handleSaveAssistantPin}>
-                    Salvar novo PIN
-                  </button>
-                  <button className="button-ghost" type="button" onClick={handlePrepareAssistantPortal}>
-                    Atualizar acesso
-                  </button>
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() => handleCopyAssistantPortal(assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`, "Link")}
-                  >
-                    Copiar link
-                  </button>
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() => handleCopyAssistantPortal(String(assistantPortalData?.assistantPin || assistantUser?.pin || "1234"), "PIN")}
-                  >
-                    Copiar PIN
-                  </button>
-                  <button
-                    className="button-ghost"
-                    type="button"
-                    onClick={() =>
-                      handleCopyAssistantPortal(
-                        assistantPortalData?.shareMessage ||
-                          `Acesso do Tesoureiro Auxiliar\n\nLink: ${assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}\nPIN: ${assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}`,
-                        "Mensagem"
-                      )
-                    }
-                  >
-                    Copiar mensagem pronta
-                  </button>
-                  <a className="button-ghost" href="/auxiliar" target="_blank" rel="noreferrer">
-                    Abrir area do auxiliar
-                  </a>
-                </div>
+                    <label className="full-span">
+                      Novo PIN do auxiliar
+                      <input
+                        inputMode="numeric"
+                        maxLength="4"
+                        value={assistantPinDraft}
+                        onChange={(event) => setAssistantPinDraft(event.target.value.replace(/\D/g, ""))}
+                        placeholder="Digite 4 numeros"
+                      />
+                    </label>
+
+                    <div className="actions-row">
+                      <button className="button-primary" type="button" onClick={handleSaveAssistantPin}>
+                        Salvar novo PIN
+                      </button>
+                      <button className="button-ghost" type="button" onClick={handlePrepareAssistantPortal}>
+                        Atualizar acesso
+                      </button>
+                      <button
+                        className="button-ghost"
+                        type="button"
+                        onClick={() => handleCopyAssistantPortal(assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`, "Link")}
+                      >
+                        Copiar link
+                      </button>
+                      <button
+                        className="button-ghost"
+                        type="button"
+                        onClick={() => handleCopyAssistantPortal(String(assistantPortalData?.assistantPin || assistantUser?.pin || "1234"), "PIN")}
+                      >
+                        Copiar PIN
+                      </button>
+                      <button
+                        className="button-ghost"
+                        type="button"
+                        onClick={() =>
+                          handleCopyAssistantPortal(
+                            assistantPortalData?.shareMessage ||
+                              `Acesso do Tesoureiro Auxiliar\n\nLink: ${assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}\nPIN: ${assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}`,
+                            "Mensagem"
+                          )
+                        }
+                      >
+                        Copiar mensagem pronta
+                      </button>
+                      <a className="button-ghost" href="/auxiliar" target="_blank" rel="noreferrer">
+                        Abrir area do auxiliar
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="callout-box full-span">
+                      <strong>Cadastre o tesoureiro auxiliar</strong>
+                      <p>Sem esse cadastro, o sistema nao consegue enviar repasses, audio nem montar a lista de ordens do portal.</p>
+                    </div>
+
+                    <label className="full-span">
+                      Nome do auxiliar
+                      <input
+                        value={assistantSetupName}
+                        onChange={(event) => setAssistantSetupName(event.target.value)}
+                        placeholder="Ex.: Tesoureiro auxiliar"
+                      />
+                    </label>
+
+                    <label className="full-span">
+                      PIN inicial do auxiliar
+                      <input
+                        inputMode="numeric"
+                        maxLength="4"
+                        value={assistantPinDraft}
+                        onChange={(event) => setAssistantPinDraft(event.target.value.replace(/\D/g, ""))}
+                        placeholder="Digite 4 numeros"
+                      />
+                    </label>
+
+                    <div className="actions-row">
+                      <button className="button-primary" type="button" onClick={handleCreateAssistantProfile}>
+                        Cadastrar auxiliar
+                      </button>
+                    </div>
+                  </>
+                )}
 
                 {assistantPortalFeedback ? <p className="helper-text full-span">{assistantPortalFeedback}</p> : null}
 
                 <div className="callout-box full-span assistant-share-box">
                   <strong>Mensagem pronta para envio</strong>
-                  <pre>{assistantPortalData?.shareMessage || ""}</pre>
+                  <pre>{assistantPortalData?.shareMessage || "Cadastre o auxiliar para gerar a mensagem pronta de acesso."}</pre>
                 </div>
               </section>
             ) : null}
@@ -547,17 +623,24 @@ export function TreasurerPage() {
 
               {moduleTab === "auxiliar" ? (
                 <div className="timeline">
-                  {authorizations
-                    .filter((item) => item.assistantId === assistantUser?.id)
-                    .map((item) => (
-                      <article key={item.id} className="timeline-item">
-                        <strong>{item.memberName}</strong>
-                        <span>
-                          {formatCurrency(item.amount)} - {item.status}
-                        </span>
-                        <small>{item.description || "Sem observacao adicional."}</small>
-                      </article>
-                    ))}
+                  {assistantUser ? (
+                    authorizations
+                      .filter((item) => item.assistantId === assistantUser?.id)
+                      .map((item) => (
+                        <article key={item.id} className="timeline-item">
+                          <strong>{item.memberName}</strong>
+                          <span>
+                            {formatCurrency(item.amount)} - {item.status}
+                          </span>
+                          <small>{item.description || "Sem observacao adicional."}</small>
+                        </article>
+                      ))
+                  ) : (
+                    <article className="timeline-item">
+                      <strong>Nenhum tesoureiro auxiliar cadastrado</strong>
+                      <small>Cadastre o auxiliar nesta aba para comecar a enviar repasses e acompanhar as ordens.</small>
+                    </article>
+                  )}
                 </div>
               ) : (
               <div className="list-toolbar">
@@ -792,7 +875,23 @@ export function TreasurerPage() {
                         onResend={handleResendAuthorization}
                         onDelete={handleDeleteAuthorization}
                       />
-                    ) : null}
+                    ) : (
+                      <div className="callout-box">
+                        <strong>Cadastre o tesoureiro auxiliar primeiro</strong>
+                        <p>Sem esse cadastro o sistema nao consegue enviar repasse, audio nem sincronizar as ordens do portal.</p>
+                        <button
+                          type="button"
+                          className="button-primary"
+                          onClick={() => {
+                            setModuleTab("auxiliar");
+                            setSidebarSection("auxiliar");
+                            scrollToRef(listRef);
+                          }}
+                        >
+                          Abrir configuracao do auxiliar
+                        </button>
+                      </div>
+                    )}
                     {selectedAuthorization ? (
                       <div className="callout-box">
                         <strong>Repasse autorizado ao auxiliar</strong>
