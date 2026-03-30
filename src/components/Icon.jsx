@@ -205,6 +205,17 @@ const paths = {
       <rect x="6" y="11" width="12" height="9" rx="2" />
       <path d="M8.5 11V8.8a3.5 3.5 0 0 1 7 0V11" />
     </>
+  ),
+  qr: (
+    <>
+      <path d="M4 4h6v6H4Z" />
+      <path d="M14 4h6v6h-6Z" />
+      <path d="M4 14h6v6H4Z" />
+      <path d="M15 14h2v2h-2Z" />
+      <path d="M18 14h2v2h-2Z" />
+      <path d="M14 17h3v3h-3Z" />
+      <path d="M18 18h2v2h-2Z" />
+    </>
   )
 };
 

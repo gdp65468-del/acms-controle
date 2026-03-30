@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import QRCode from "qrcode";
 import { Icon } from "../components/Icon";
 import { useAppContext } from "../context/AppContext";
 import { formatDate } from "../utils/format";
@@ -91,6 +92,13 @@ export function FilesPage() {
   const [viewMode, setViewMode] = useState("grid");
   const [lightboxAsset, setLightboxAsset] = useState(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
+  const [lightboxDragging, setLightboxDragging] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrFolder, setQrFolder] = useState(null);
+  const [qrSession, setQrSession] = useState(null);
+  const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
   const [folderForm, setFolderForm] = useState({ name: "", description: "" });
   const [uploadForm, setUploadForm] = useState({ title: "", notes: "" });
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -99,6 +107,7 @@ export function FilesPage() {
   const [uploading, setUploading] = useState(false);
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const lightboxDragRef = useRef(null);
 
   const activeFolders = useMemo(() => fileFolders.filter((item) => !item.deletedAt), [fileFolders]);
   const activeAssets = useMemo(() => fileAssets.filter((item) => !item.deletedAt), [fileAssets]);
@@ -128,6 +137,53 @@ export function FilesPage() {
   }, [feedback]);
 
   useEffect(() => {
+    if (!lightboxAsset) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setLightboxAsset(null);
+        return;
+      }
+      if (event.key === "ArrowLeft" && hasPreviousLightboxAsset) {
+        event.preventDefault();
+        openLightboxByIndex(lightboxIndex - 1);
+      }
+      if (event.key === "ArrowRight" && hasNextLightboxAsset) {
+        event.preventDefault();
+        openLightboxByIndex(lightboxIndex + 1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasNextLightboxAsset, hasPreviousLightboxAsset, lightboxAsset, lightboxIndex]);
+
+  useEffect(() => {
+    if (!lightboxDragging) return undefined;
+
+    function handlePointerMove(event) {
+      const drag = lightboxDragRef.current;
+      if (!drag) return;
+      setLightboxOffset({
+        x: drag.originX + (event.clientX - drag.startX),
+        y: drag.originY + (event.clientY - drag.startY)
+      });
+    }
+
+    function handlePointerUp() {
+      lightboxDragRef.current = null;
+      setLightboxDragging(false);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [lightboxDragging]);
+
+  useEffect(() => {
     function handlePointerDown(event) {
       const target = event.target;
       if (target instanceof HTMLElement && target.closest(".files-card-toolbar, .files-item-menu, .files-trash-actions")) {
@@ -138,6 +194,54 @@ export function FilesPage() {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (!showQrModal || !qrSession?.accessLink) {
+      setQrCodeUrl("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    QRCode.toDataURL(qrSession.accessLink, {
+      width: 280,
+      margin: 1,
+      color: {
+        dark: "#f8fafc",
+        light: "#101826"
+      }
+    })
+      .then((url) => {
+        if (!cancelled) {
+          setQrCodeUrl(url);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setQrCodeUrl("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [qrSession?.accessLink, showQrModal]);
+
+  useEffect(() => {
+    if (!showQrModal || !qrSession) return undefined;
+    const timer = window.setInterval(() => {
+      setQrSession((current) => {
+        if (!current) return current;
+        const expiresAt = new Date(current.expiresAt || 0).getTime();
+        if (Number.isNaN(expiresAt)) return current;
+        return {
+          ...current,
+          remainingMs: Math.max(0, expiresAt - Date.now()),
+          isExpired: current.status !== "ATIVA" || expiresAt <= Date.now()
+        };
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [qrSession, showQrModal]);
 
   const breadcrumbs = useMemo(() => {
     if (!currentFolder) return [{ id: "", label: "Meu drive" }];
@@ -198,9 +302,19 @@ export function FilesPage() {
   }, [trashedAssets, searchQuery]);
 
   const visibleAssets = currentSection === "trash" ? trashAssetsView : currentAssets;
+  const lightboxAssets = useMemo(
+    () => visibleAssets.filter((item) => item.fileType === "image"),
+    [visibleAssets]
+  );
   const selectedAsset = visibleAssets.find((item) => item.id === selectedAssetId) || null;
   const selectedAssets = currentAssets.filter((item) => selectedAssetIds.includes(item.id));
   const digitizedCount = activeAssets.filter((item) => item.digitized).length;
+  const lightboxIndex = useMemo(
+    () => lightboxAssets.findIndex((item) => item.id === lightboxAsset?.id),
+    [lightboxAsset?.id, lightboxAssets]
+  );
+  const hasPreviousLightboxAsset = lightboxIndex > 0;
+  const hasNextLightboxAsset = lightboxIndex >= 0 && lightboxIndex < lightboxAssets.length - 1;
   const moveTargets = useMemo(() => {
     const excluded =
       moveModal?.type === "folder" ? [moveModal.folderId, ...getDescendantIds(activeFolders, moveModal.folderId)] : [];
@@ -248,6 +362,25 @@ export function FilesPage() {
       current.includes(assetId) ? current.filter((id) => id !== assetId) : [...current, assetId]
     );
     setSelectedAssetId(assetId);
+  }
+
+  function resetLightboxView() {
+    setLightboxZoom(1);
+    setLightboxOffset({ x: 0, y: 0 });
+    lightboxDragRef.current = null;
+    setLightboxDragging(false);
+  }
+
+  function openLightboxAssetByRecord(asset) {
+    setLightboxAsset(asset);
+    setSelectedAssetId(asset.id);
+    resetLightboxView();
+  }
+
+  function openLightboxByIndex(index) {
+    const nextAsset = lightboxAssets[index];
+    if (!nextAsset) return;
+    openLightboxAssetByRecord(nextAsset);
   }
 
   function handleFileChosen(files) {
@@ -434,6 +567,65 @@ export function FilesPage() {
     }
   }
 
+  async function openDriveUploadQr(folder, { regenerate = false } = {}) {
+    if (!folder?.id) return;
+    setQrLoading(true);
+    setQrFolder(folder);
+    setShowQrModal(true);
+    try {
+      const nextSession = await actions.createDriveUploadSession(
+        {
+          id: folder.id,
+          name: folder.name,
+          path: buildFolderPath(folder, activeFolders)
+        },
+        currentUserId,
+        { regenerate }
+      );
+      setQrSession(nextSession);
+      if (regenerate) {
+        showSuccess("Novo QR temporario gerado para esta pasta.");
+      }
+    } catch (error) {
+      showError(error);
+      setShowQrModal(false);
+      setQrFolder(null);
+      setQrSession(null);
+    } finally {
+      setQrLoading(false);
+    }
+  }
+
+  async function handleCloseQrSession() {
+    if (!qrSession?.id) return;
+    if (!window.confirm("Encerrar este acesso temporario agora?")) return;
+    try {
+      await actions.closeDriveUploadSession(qrSession.id);
+      setQrSession((current) =>
+        current
+          ? {
+              ...current,
+              status: "ENCERRADA",
+              remainingMs: 0,
+              isExpired: true
+            }
+          : current
+      );
+      showSuccess("Acesso temporario encerrado.");
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function copyText(text, successMessage) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showSuccess(successMessage);
+    } catch (error) {
+      showError(new Error("Nao foi possivel copiar automaticamente. Copie manualmente."));
+    }
+  }
+
   function openRenameFolder(folder) {
     setRenameModal({ type: "folder", id: folder.id, value: folder.name });
   }
@@ -451,15 +643,32 @@ export function FilesPage() {
     setMoveModal({ type: "assets", assetIds, targetId: currentFolderId });
   }
 
+  function handleLightboxPointerDown(event) {
+    if (!lightboxAsset) return;
+    event.preventDefault();
+    lightboxDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: lightboxOffset.x,
+      originY: lightboxOffset.y
+    };
+    setLightboxDragging(true);
+  }
+
+  function handleLightboxWheel(event) {
+    event.preventDefault();
+    const delta = event.deltaY < 0 ? 0.15 : -0.15;
+    setLightboxZoom((current) => Math.min(4, Math.max(0.5, Number((current + delta).toFixed(2)))));
+  }
+
   function resetLightboxZoom() {
-    setLightboxZoom(1);
+    resetLightboxView();
   }
 
   function openAsset(asset) {
     setSelectedAssetId(asset.id);
     if (asset.fileType === "image") {
-      setLightboxAsset(asset);
-      setLightboxZoom(1);
+      openLightboxAssetByRecord(asset);
       return;
     }
     window.open(asset.secureUrl, "_blank", "noopener,noreferrer");
@@ -499,6 +708,7 @@ export function FilesPage() {
     const menuItems = [
       { icon: "edit", label: "Renomear", onClick: () => openRenameFolder(folder) },
       { icon: "move", label: "Mover", onClick: () => openMoveFolder(folder) },
+      { icon: "qr", label: "QR para enviar arquivos", onClick: () => openDriveUploadQr(folder) },
       { icon: "trash", label: "Enviar para lixeira", variant: "danger", onClick: () => handleTrashFolder(folder.id) }
     ];
     return (
@@ -1058,6 +1268,7 @@ export function FilesPage() {
                   <div className="files-inspector-actions">
                     <ActionChip icon="edit" label="Renomear pasta" onClick={() => openRenameFolder(currentFolder)} />
                     <ActionChip icon="move" label="Mover pasta" onClick={() => openMoveFolder(currentFolder)} />
+                    <ActionChip icon="qr" label="QR de envio" onClick={() => openDriveUploadQr(currentFolder)} />
                     <ActionChip icon="trash" label="Lixeira" variant="danger" onClick={() => handleTrashFolder(currentFolder.id)} />
                   </div>
                 ) : null}
@@ -1066,6 +1277,109 @@ export function FilesPage() {
           </aside>
         </div>
       </main>
+
+      {showQrModal ? (
+        <div
+          className="files-modal-backdrop files-qr-backdrop"
+          onClick={() => {
+            setShowQrModal(false);
+            setQrFolder(null);
+            setQrSession(null);
+          }}
+        >
+          <div className="files-modal-card files-qr-modal" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="files-qr-close"
+              onClick={() => {
+                setShowQrModal(false);
+                setQrFolder(null);
+                setQrSession(null);
+              }}
+            >
+              <Icon name="close" size={18} />
+            </button>
+            <div className="files-qr-header">
+              <span className="files-qr-badge">Enviar do celular</span>
+              <h3>QR temporario para upload</h3>
+              <p>
+                Escaneie para enviar arquivos diretamente para <strong>{qrFolder?.name || qrSession?.folderName || "esta pasta"}</strong>.
+              </p>
+            </div>
+
+            {qrLoading ? (
+              <div className="files-empty-state">
+                <Icon name="qr" size={28} />
+                <strong>Gerando acesso temporario...</strong>
+                <p>Estamos preparando o QR, o codigo e o link desta pasta.</p>
+              </div>
+            ) : qrSession ? (
+              <div className="files-qr-layout">
+                <div className="files-qr-copy">
+                  <div className="files-qr-instructions">
+                    <strong>Como usar</strong>
+                    <p>Abra a camera do celular, aponte para o QR e depois digite o codigo curto para liberar o envio.</p>
+                    <ul className="files-selected-file-list">
+                      <li>Esse acesso so envia para esta pasta.</li>
+                      <li>A sessao expira apos 30 minutos sem atividade.</li>
+                      <li>No celular, sera possivel apagar e renomear apenas os arquivos dessa sessao.</li>
+                    </ul>
+                  </div>
+                  <div className="files-qr-code-box">
+                    {qrCodeUrl ? <img src={qrCodeUrl} alt={`QR para enviar arquivos a ${qrSession.folderName}`} /> : <span>QR indisponivel</span>}
+                  </div>
+                  <div className="files-qr-code-value">
+                    <span>Codigo de acesso</span>
+                    <strong>{qrSession.accessCode || "------"}</strong>
+                  </div>
+                  <div className="files-qr-meta">
+                    <div>
+                      <span>Link temporario</span>
+                      <strong>{qrSession.accessLink}</strong>
+                    </div>
+                    <div>
+                      <span>Tempo restante</span>
+                      <strong>{Math.max(0, Math.floor((qrSession.remainingMs || 0) / 60000))} min</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="files-qr-actions">
+                  <button type="button" className="button-primary" onClick={() => window.open(qrSession.accessLink, "_blank", "noopener,noreferrer")}>
+                    <Icon name="upload" size={18} />
+                    <span>Acessar aqui</span>
+                  </button>
+                  <button type="button" className="button-ghost" onClick={() => copyText(qrSession.accessLink, "Link temporario copiado.")}>
+                    <Icon name="download" size={18} />
+                    <span>Copiar link</span>
+                  </button>
+                  <button type="button" className="button-ghost" onClick={() => copyText(qrSession.accessCode || "", "Codigo de acesso copiado.")}>
+                    <Icon name="lock" size={18} />
+                    <span>Copiar codigo</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() =>
+                      openDriveUploadQr(
+                        qrFolder || { id: qrSession.folderId, name: qrSession.folderName, path: qrSession.folderPath },
+                        { regenerate: true }
+                      )
+                    }
+                  >
+                    <Icon name="refresh" size={18} />
+                    <span>Gerar novo QR</span>
+                  </button>
+                  <button type="button" className="button-ghost danger-text" onClick={handleCloseQrSession}>
+                    <Icon name="close" size={18} />
+                    <span>Encerrar acesso</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {showCreateFolderModal ? (
         <div className="files-modal-backdrop" onClick={() => setShowCreateFolderModal(false)}>
@@ -1248,23 +1562,63 @@ export function FilesPage() {
               <div>
                 <strong>{lightboxAsset.title}</strong>
                 <p>{lightboxAsset.notes || "Visualizador de imagem com zoom."}</p>
+                <span className="files-lightbox-count">
+                  {lightboxIndex >= 0 ? `${lightboxIndex + 1} de ${lightboxAssets.length}` : `1 de ${lightboxAssets.length || 1}`}
+                </span>
               </div>
               <div className="files-lightbox-actions">
+                <ActionChip
+                  icon={lightboxAsset.digitized ? "refresh" : "check"}
+                  label={lightboxAsset.digitized ? "Voltar pendente" : "Marcar digitada"}
+                  variant={lightboxAsset.digitized ? "success" : "default"}
+                  onClick={() => handleToggleDigitized(lightboxAsset)}
+                />
+                <ActionChip
+                  icon="arrowLeft"
+                  label="Anterior"
+                  onClick={() => openLightboxByIndex(lightboxIndex - 1)}
+                />
+                <ActionChip
+                  icon="chevron"
+                  label="Proxima"
+                  onClick={() => openLightboxByIndex(lightboxIndex + 1)}
+                />
                 <ActionChip icon="zoomOut" label="Zoom -" onClick={() => setLightboxZoom((current) => Math.max(0.5, current - 0.25))} />
                 <ActionChip icon="zoomIn" label="Zoom +" onClick={() => setLightboxZoom((current) => Math.min(3, current + 0.25))} />
-                <ActionChip icon="grid" label="Ajustar" onClick={() => setLightboxZoom(1)} />
+                <ActionChip icon="grid" label="Ajustar" onClick={() => setLightboxOffset({ x: 0, y: 0 })} />
                 <ActionChip icon="refresh" label="Reset" onClick={resetLightboxZoom} />
                 <ActionChip icon="download" label="Baixar" onClick={() => handleDownloadAsset(lightboxAsset)} />
                 <ActionChip icon="close" label="Fechar" onClick={() => setLightboxAsset(null)} />
               </div>
             </div>
-            <div className="files-lightbox-image-wrap">
+            <div className="files-lightbox-image-wrap" onWheel={handleLightboxWheel}>
+              <button
+                type="button"
+                className="files-lightbox-nav files-lightbox-nav-left"
+                onClick={() => openLightboxByIndex(lightboxIndex - 1)}
+                disabled={!hasPreviousLightboxAsset}
+              >
+                <Icon name="arrowLeft" size={18} />
+              </button>
               <img
                 className="files-lightbox-image"
                 src={lightboxAsset.secureUrl}
                 alt={lightboxAsset.title}
-                style={{ transform: `scale(${lightboxZoom})`, transformOrigin: "center center" }}
+                onPointerDown={handleLightboxPointerDown}
+                style={{
+                  transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) scale(${lightboxZoom})`,
+                  transformOrigin: "center center",
+                  cursor: lightboxDragging ? "grabbing" : "grab"
+                }}
               />
+              <button
+                type="button"
+                className="files-lightbox-nav files-lightbox-nav-right"
+                onClick={() => openLightboxByIndex(lightboxIndex + 1)}
+                disabled={!hasNextLightboxAsset}
+              >
+                <Icon name="chevron" size={18} />
+              </button>
             </div>
           </div>
         </div>

@@ -13,7 +13,8 @@ import {
   setDoc,
   updateDoc,
   where,
-  writeBatch
+  writeBatch,
+  Timestamp
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, firebaseEnabled, googleProvider, storage } from "../firebase";
@@ -28,12 +29,14 @@ const COLLECTIONS = {
   history: "historico_eventos",
   authorizations: "autorizacoes_repasse",
   assistantAccess: "acesso_auxiliar",
+  driveUploadSessions: "sessoes_upload_drive",
   fileFolders: "pastas_arquivos",
   fileAssets: "arquivos"
 };
 
 const ASSISTANT_PORTAL_ID = "principal";
 const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
+const DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES = 30;
 
 async function saveHistory(advanceId, type, message) {
   await addDoc(collection(db, COLLECTIONS.history), {
@@ -72,6 +75,73 @@ async function hashPin(pin) {
 
 function getAssistantAccessToken() {
   return ASSISTANT_PORTAL_ID;
+}
+
+function addMinutes(dateLike, minutes = DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES) {
+  const baseDate =
+    typeof dateLike?.toDate === "function" ? dateLike.toDate() : new Date(dateLike || Date.now());
+  return new Date(baseDate.getTime() + minutes * 60 * 1000);
+}
+
+function toDateValue(value) {
+  if (!value) return null;
+  if (typeof value?.toDate === "function") return value.toDate();
+  const nextDate = new Date(value);
+  return Number.isNaN(nextDate.getTime()) ? null : nextDate;
+}
+
+function isDriveUploadSessionExpired(session) {
+  if (!session) return true;
+  if (String(session.status || "") !== "ATIVA") return true;
+  const expiresAt = toDateValue(session.expiresAt);
+  if (!expiresAt) return true;
+  return expiresAt.getTime() <= Date.now();
+}
+
+function getDriveUploadSessionLink(sessionId) {
+  return typeof window !== "undefined" ? `${window.location.origin}/drive-upload/${sessionId}` : `/drive-upload/${sessionId}`;
+}
+
+function generateDriveUploadAccessCode() {
+  const random = crypto.getRandomValues(new Uint32Array(1))[0] % 1000000;
+  return String(random).padStart(6, "0");
+}
+
+function buildDriveUploadSessionResponse(session, accessCode = "") {
+  const expiresAt = toDateValue(session.expiresAt);
+  const remainingMs = expiresAt ? Math.max(0, expiresAt.getTime() - Date.now()) : 0;
+  return {
+    id: session.id,
+    folderId: session.folderId || "",
+    folderName: session.folderName || "Pasta sem nome",
+    folderPath: session.folderPath || "",
+    createdBy: session.createdBy || "",
+    status: session.status || "ATIVA",
+    createdAt: session.createdAt || "",
+    lastActiveAt: session.lastActiveAt || "",
+    expiresAt: session.expiresAt || "",
+    accessCodeHash: session.accessCodeHash || "",
+    accessCode,
+    accessLink: getDriveUploadSessionLink(session.id),
+    isExpired: isDriveUploadSessionExpired(session),
+    remainingMs
+  };
+}
+
+function mapDriveUploadSession(id, data) {
+  return {
+    id,
+    status: "ATIVA",
+    folderId: "",
+    folderName: "",
+    folderPath: "",
+    accessCodeHash: "",
+    createdBy: "",
+    createdAt: "",
+    lastActiveAt: "",
+    expiresAt: "",
+    ...data
+  };
 }
 
 function getAssistantPortalLink() {
@@ -679,6 +749,303 @@ export const appService = {
 
     const docRef = await addDoc(collection(db, COLLECTIONS.fileFolders), record);
     return { id: docRef.id, ...record };
+  },
+
+  async getDriveUploadSession(sessionId, { includeSecret = false } = {}) {
+    if (!sessionId) {
+      throw new Error("Sessao de upload nao encontrada.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.getDriveUploadSession(sessionId, { includeSecret });
+    }
+
+    const sessionRef = doc(db, COLLECTIONS.driveUploadSessions, sessionId);
+    const sessionSnapshot = await getDoc(sessionRef);
+    if (!sessionSnapshot.exists()) {
+      throw new Error("Sessao de upload nao encontrada.");
+    }
+
+    const session = mapDriveUploadSession(sessionSnapshot.id, sessionSnapshot.data());
+    let accessCode = "";
+    if (includeSecret) {
+      const secretSnapshot = await getDoc(doc(db, COLLECTIONS.driveUploadSessions, sessionId, "controle", "segredo"));
+      accessCode = secretSnapshot.exists() ? String(secretSnapshot.data()?.accessCode || "") : "";
+    }
+
+    return buildDriveUploadSessionResponse(session, accessCode);
+  },
+
+  async createDriveUploadSession(folder, createdBy, { regenerate = false } = {}) {
+    if (!folder?.id) {
+      throw new Error("Abra uma pasta antes de gerar o QR.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.createDriveUploadSession(folder, createdBy, { regenerate });
+    }
+
+    const existingSessionsSnapshot = await getDocs(
+      query(collection(db, COLLECTIONS.driveUploadSessions), where("folderId", "==", String(folder.id)))
+    );
+    const existingSessions = existingSessionsSnapshot.docs.map((item) => mapDriveUploadSession(item.id, item.data()));
+    const activeSession = existingSessions.find((item) => item.status === "ATIVA" && !isDriveUploadSessionExpired(item));
+
+    if (activeSession && !regenerate) {
+      return this.getDriveUploadSession(activeSession.id, { includeSecret: true });
+    }
+
+    const accessCode = generateDriveUploadAccessCode();
+    const accessCodeHash = await hashPin(accessCode);
+    const now = new Date();
+    const expiresAt = Timestamp.fromDate(addMinutes(now));
+    const sessionRef = doc(collection(db, COLLECTIONS.driveUploadSessions));
+    const batch = writeBatch(db);
+
+    existingSessions
+      .filter((item) => item.status === "ATIVA")
+      .forEach((item) => {
+        batch.update(doc(db, COLLECTIONS.driveUploadSessions, item.id), { status: "ENCERRADA" });
+      });
+
+    batch.set(sessionRef, {
+      folderId: String(folder.id),
+      folderName: String(folder.name || ""),
+      folderPath: String(folder.path || folder.folderPath || folder.name || ""),
+      accessCodeHash,
+      createdBy: String(createdBy || ""),
+      createdAt: Timestamp.fromDate(now),
+      lastActiveAt: Timestamp.fromDate(now),
+      expiresAt,
+      status: "ATIVA"
+    });
+    batch.set(doc(db, COLLECTIONS.driveUploadSessions, sessionRef.id, "controle", "segredo"), {
+      accessCode,
+      accessCodeHash,
+      createdAt: Timestamp.fromDate(now)
+    });
+    await batch.commit();
+
+    return buildDriveUploadSessionResponse(
+      {
+        id: sessionRef.id,
+        folderId: String(folder.id),
+        folderName: String(folder.name || ""),
+        folderPath: String(folder.path || folder.folderPath || folder.name || ""),
+        accessCodeHash,
+        createdBy: String(createdBy || ""),
+        createdAt: Timestamp.fromDate(now),
+        lastActiveAt: Timestamp.fromDate(now),
+        expiresAt,
+        status: "ATIVA"
+      },
+      accessCode
+    );
+  },
+
+  async touchDriveUploadSession(sessionId, accessCodeHash) {
+    if (!sessionId) {
+      throw new Error("Sessao de upload nao encontrada.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.touchDriveUploadSession(sessionId, accessCodeHash);
+    }
+
+    const sessionRef = doc(db, COLLECTIONS.driveUploadSessions, sessionId);
+    const sessionSnapshot = await getDoc(sessionRef);
+    if (!sessionSnapshot.exists()) {
+      throw new Error("Sessao de upload nao encontrada.");
+    }
+    const session = mapDriveUploadSession(sessionSnapshot.id, sessionSnapshot.data());
+    if (session.status !== "ATIVA" || isDriveUploadSessionExpired(session)) {
+      throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
+    }
+    if (String(session.accessCodeHash || "") !== String(accessCodeHash || "")) {
+      throw new Error("Codigo de acesso invalido.");
+    }
+
+    await updateDoc(sessionRef, {
+      lastActiveAt: Timestamp.now(),
+      expiresAt: Timestamp.fromDate(addMinutes(new Date()))
+    });
+    return true;
+  },
+
+  async validateDriveUploadSession(sessionId, accessCode) {
+    const session = await this.getDriveUploadSession(sessionId);
+    if (session.status !== "ATIVA" || session.isExpired) {
+      throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
+    }
+
+    const accessCodeHash = await hashPin(String(accessCode || "").trim());
+    if (accessCodeHash !== session.accessCodeHash) {
+      throw new Error("Codigo de acesso invalido.");
+    }
+
+    await this.touchDriveUploadSession(sessionId, accessCodeHash);
+    localStorage.setItem(`acms-drive-upload:${sessionId}`, accessCodeHash);
+    return {
+      ...(await this.getDriveUploadSession(sessionId)),
+      accessCodeHash
+    };
+  },
+
+  isDriveUploadSessionUnlocked(sessionId, session = null) {
+    const storedHash = localStorage.getItem(`acms-drive-upload:${sessionId}`);
+    if (!storedHash) return false;
+    if (!session) return true;
+    if (session.status !== "ATIVA" || isDriveUploadSessionExpired(session)) return false;
+    return storedHash === String(session.accessCodeHash || "");
+  },
+
+  lockDriveUploadSession(sessionId) {
+    localStorage.removeItem(`acms-drive-upload:${sessionId}`);
+  },
+
+  async listSessionAssets(sessionId) {
+    if (!sessionId) return [];
+
+    if (!firebaseEnabled) {
+      return localDb.listSessionAssets(sessionId);
+    }
+
+    const snapshot = await getDocs(query(collection(db, COLLECTIONS.fileAssets), where("uploadSessionId", "==", String(sessionId))));
+    return sortByDateDesc(snapshot.docs.map((item) => mapFileAsset(item.id, item.data())), "createdAt").filter(
+      (item) => !item.deletedAt
+    );
+  },
+
+  async uploadFileAssetToSession(payload) {
+    const session = await this.getDriveUploadSession(payload.sessionId);
+    if (session.status !== "ATIVA" || session.isExpired) {
+      throw new Error("Este acesso temporario expirou. Gere um novo QR no Meu drive.");
+    }
+
+    const accessCodeHash = String(payload.accessCodeHash || "");
+    if (accessCodeHash !== String(session.accessCodeHash || "")) {
+      throw new Error("Codigo de acesso invalido.");
+    }
+
+    const fileType = getFileAssetType(payload.file);
+    if (!fileType) {
+      throw new Error("Envie apenas imagem ou PDF.");
+    }
+
+    const preparedFile = await prepareFileForUpload(payload.file);
+    const finalTitle = String(payload.title || preparedFile.name || payload.file.name || "").trim();
+    if (!finalTitle) {
+      throw new Error("Informe um titulo para o arquivo.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.uploadFileAssetToSession({
+        ...payload,
+        accessCodeHash,
+        title: finalTitle,
+        file: preparedFile
+      });
+    }
+
+    if (!cloudinaryEnabled) {
+      throw new Error("Configure o Cloudinary para enviar arquivos.");
+    }
+
+    const folderName = session.folderPath
+      ? `acms-controle/${session.folderPath
+          .split("/")
+          .filter(Boolean)
+          .map((segment) => segment.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""))
+          .join("/")}`
+      : "acms-controle/geral";
+
+    const cloudinaryResult = await uploadToCloudinary(preparedFile, folderName);
+    const record = {
+      folderId: session.folderId,
+      title: finalTitle,
+      originalFileName: payload.file.name,
+      fileType,
+      mimeType: preparedFile.type,
+      cloudinaryPublicId: cloudinaryResult.public_id || "",
+      secureUrl: cloudinaryResult.secure_url || "",
+      thumbnailUrl: fileType === "image" ? cloudinaryResult.secure_url || "" : "",
+      notes: String(payload.notes || "").trim(),
+      digitized: false,
+      digitizedAt: "",
+      deletedAt: "",
+      uploadedBy: `sessao:${payload.sessionId}`,
+      createdAt: serverTimestamp(),
+      uploadSessionId: payload.sessionId,
+      uploadedViaSession: true,
+      sessionEditable: true,
+      sessionCodeHash: accessCodeHash
+    };
+    const docRef = await addDoc(collection(db, COLLECTIONS.fileAssets), record);
+    await this.touchDriveUploadSession(payload.sessionId, accessCodeHash);
+    return { id: docRef.id, ...record };
+  },
+
+  async renameSessionAsset(assetId, sessionId, accessCodeHash, title) {
+    const normalizedTitle = String(title || "").trim();
+    if (!normalizedTitle) {
+      throw new Error("Informe o nome do arquivo.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.renameSessionAsset(assetId, sessionId, accessCodeHash, normalizedTitle);
+    }
+
+    const assetRef = doc(db, COLLECTIONS.fileAssets, assetId);
+    const assetSnapshot = await getDoc(assetRef);
+    if (!assetSnapshot.exists()) {
+      throw new Error("Arquivo nao encontrado.");
+    }
+    const asset = mapFileAsset(assetSnapshot.id, assetSnapshot.data());
+    if (String(asset.uploadSessionId || "") !== String(sessionId) || asset.deletedAt) {
+      throw new Error("Este arquivo nao pertence a esta sessao.");
+    }
+    if (String(asset.sessionCodeHash || "") !== String(accessCodeHash || "")) {
+      throw new Error("Codigo de acesso invalido.");
+    }
+
+    await updateDoc(assetRef, { title: normalizedTitle });
+    await this.touchDriveUploadSession(sessionId, accessCodeHash);
+    return true;
+  },
+
+  async deleteSessionAsset(assetId, sessionId, accessCodeHash) {
+    if (!firebaseEnabled) {
+      return localDb.deleteSessionAsset(assetId, sessionId, accessCodeHash);
+    }
+
+    const assetRef = doc(db, COLLECTIONS.fileAssets, assetId);
+    const assetSnapshot = await getDoc(assetRef);
+    if (!assetSnapshot.exists()) {
+      throw new Error("Arquivo nao encontrado.");
+    }
+    const asset = mapFileAsset(assetSnapshot.id, assetSnapshot.data());
+    if (String(asset.uploadSessionId || "") !== String(sessionId) || asset.deletedAt) {
+      throw new Error("Este arquivo nao pertence a esta sessao.");
+    }
+    if (String(asset.sessionCodeHash || "") !== String(accessCodeHash || "")) {
+      throw new Error("Codigo de acesso invalido.");
+    }
+
+    await updateDoc(assetRef, { deletedAt: new Date().toISOString() });
+    await this.touchDriveUploadSession(sessionId, accessCodeHash);
+    return true;
+  },
+
+  async closeDriveUploadSession(sessionId) {
+    if (!sessionId) return;
+
+    if (!firebaseEnabled) {
+      return localDb.closeDriveUploadSession(sessionId);
+    }
+
+    await updateDoc(doc(db, COLLECTIONS.driveUploadSessions, sessionId), { status: "ENCERRADA" });
+    localStorage.removeItem(`acms-drive-upload:${sessionId}`);
+    return true;
   },
 
   async uploadFileAsset(payload) {

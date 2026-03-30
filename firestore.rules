@@ -16,6 +16,55 @@ service cloud.firestore {
         get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == "assistant";
     }
 
+    function driveSessionRef(sessionId) {
+      return /databases/$(database)/documents/sessoes_upload_drive/$(sessionId);
+    }
+
+    function driveSessionData(sessionId) {
+      return get(driveSessionRef(sessionId)).data;
+    }
+
+    function isDriveSessionActive(sessionId) {
+      return exists(driveSessionRef(sessionId)) &&
+        driveSessionData(sessionId).status == "ATIVA" &&
+        driveSessionData(sessionId).expiresAt > request.time;
+    }
+
+    function driveSessionAssetCreateAllowed() {
+      return !signedIn() &&
+        request.resource.data.uploadedViaSession == true &&
+        request.resource.data.sessionEditable == true &&
+        request.resource.data.uploadSessionId is string &&
+        isDriveSessionActive(request.resource.data.uploadSessionId) &&
+        request.resource.data.sessionCodeHash == driveSessionData(request.resource.data.uploadSessionId).accessCodeHash &&
+        request.resource.data.folderId == driveSessionData(request.resource.data.uploadSessionId).folderId;
+    }
+
+    function driveSessionAssetUpdateAllowed() {
+      return !signedIn() &&
+        resource.data.uploadedViaSession == true &&
+        resource.data.sessionEditable == true &&
+        resource.data.uploadSessionId is string &&
+        isDriveSessionActive(resource.data.uploadSessionId) &&
+        resource.data.sessionCodeHash == driveSessionData(resource.data.uploadSessionId).accessCodeHash &&
+        request.resource.data.uploadSessionId == resource.data.uploadSessionId &&
+        request.resource.data.uploadedViaSession == true &&
+        request.resource.data.sessionEditable == true &&
+        request.resource.data.sessionCodeHash == resource.data.sessionCodeHash &&
+        request.resource.data.folderId == resource.data.folderId &&
+        request.resource.data.originalFileName == resource.data.originalFileName &&
+        request.resource.data.fileType == resource.data.fileType &&
+        request.resource.data.mimeType == resource.data.mimeType &&
+        request.resource.data.cloudinaryPublicId == resource.data.cloudinaryPublicId &&
+        request.resource.data.secureUrl == resource.data.secureUrl &&
+        request.resource.data.thumbnailUrl == resource.data.thumbnailUrl &&
+        request.resource.data.notes == resource.data.notes &&
+        request.resource.data.uploadedBy == resource.data.uploadedBy &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.digitized == resource.data.digitized &&
+        request.resource.data.digitizedAt == resource.data.digitizedAt;
+    }
+
     match /usuarios/{userId} {
       allow read: if isTreasurer() || (signedIn() && request.auth.uid == userId);
       allow write: if isTreasurer();
@@ -41,8 +90,41 @@ service cloud.firestore {
       allow read, create, update, delete: if isTreasurer();
     }
 
+    match /sessoes_upload_drive/{sessionId} {
+      allow read: if true;
+      allow create, delete: if isTreasurer();
+      allow update: if isTreasurer() || (
+        !signedIn() &&
+        resource.data.status == "ATIVA" &&
+        isDriveSessionActive(sessionId) &&
+        request.resource.data.folderId == resource.data.folderId &&
+        request.resource.data.folderName == resource.data.folderName &&
+        request.resource.data.folderPath == resource.data.folderPath &&
+        request.resource.data.accessCodeHash == resource.data.accessCodeHash &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.lastActiveAt is timestamp &&
+        request.resource.data.expiresAt is timestamp &&
+        request.resource.data.lastActiveAt >= resource.data.lastActiveAt &&
+        request.resource.data.expiresAt > request.time
+      );
+
+      match /controle/{docId} {
+        allow read, write: if isTreasurer();
+      }
+    }
+
     match /arquivos/{fileId} {
-      allow read, create, update, delete: if isTreasurer();
+      allow read: if isTreasurer() || (
+        resource.data.uploadedViaSession == true &&
+        resource.data.uploadSessionId is string &&
+        isDriveSessionActive(resource.data.uploadSessionId) &&
+        resource.data.sessionCodeHash == driveSessionData(resource.data.uploadSessionId).accessCodeHash
+      );
+      allow create: if isTreasurer() || driveSessionAssetCreateAllowed();
+      allow update: if isTreasurer() || driveSessionAssetUpdateAllowed();
+      allow delete: if isTreasurer();
     }
 
     match /acesso_auxiliar/{token} {

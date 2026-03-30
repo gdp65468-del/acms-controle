@@ -5,6 +5,7 @@ import { TreasurerPage } from "./pages/TreasurerPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { PublicAdvancePage } from "./pages/PublicAdvancePage";
 import { FilesPage } from "./pages/FilesPage";
+import { DriveUploadPage } from "./pages/DriveUploadPage";
 
 function ProtectedTreasurerRoute({ element }) {
   const { loading, session } = useAppContext();
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/arquivos" element={<ProtectedTreasurerRoute element={<FilesPage />} />} />
         <Route path="/auxiliar" element={<AssistantPage />} />
         <Route path="/auxiliar/:token" element={<AssistantPage />} />
+        <Route path="/drive-upload/:sessionId" element={<DriveUploadPage />} />
         <Route path="/publico/:token" element={<PublicAdvancePage />} />
       </Routes>
     </AppProvider>
