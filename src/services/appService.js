@@ -79,6 +79,22 @@ function sortByDateDesc(items, field) {
   });
 }
 
+function resolveApprovedTreasurer(users, authUser) {
+  if (!authUser) return null;
+  const match = users.find(
+    (item) =>
+      item.role === "treasurer" &&
+      (item.id === authUser.uid || String(item.email || "").toLowerCase() === String(authUser.email || "").toLowerCase())
+  );
+  if (!match) return null;
+  return {
+    id: authUser.uid,
+    nome: match.nome || authUser.displayName || "Tesouraria",
+    email: authUser.email,
+    role: "treasurer"
+  };
+}
+
 async function uploadToCloudinary(file, folderName = "") {
   const formData = new FormData();
   formData.append("file", file);
@@ -146,6 +162,7 @@ export const appService = {
         }
       });
     let dataUnsubscribers = [];
+    let authenticatedUser = null;
 
     function clearDataSubscriptions() {
       dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
@@ -159,6 +176,7 @@ export const appService = {
       state.history = [];
       state.fileFolders = [];
       state.fileAssets = [];
+      state.session.currentUser = null;
       state.session.assistantUser = null;
     }
 
@@ -174,6 +192,7 @@ export const appService = {
       ])
         .then(([usersSnapshot, advancesSnapshot, authorizationsSnapshot, historySnapshot, fileFoldersSnapshot, fileAssetsSnapshot]) => {
           state.users = usersSnapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+          state.session.currentUser = resolveApprovedTreasurer(state.users, authenticatedUser);
           state.session.assistantUser = state.users.find((item) => item.role === "assistant") || null;
           state.advances = sortByDateDesc(
             advancesSnapshot.docs.map((item) => mapAdvance(item.id, item.data())),
@@ -206,6 +225,7 @@ export const appService = {
           collection(db, COLLECTIONS.users),
           (snapshot) => {
             state.users = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+            state.session.currentUser = resolveApprovedTreasurer(state.users, authenticatedUser);
             state.session.assistantUser = state.users.find((item) => item.role === "assistant") || null;
             emit();
           },
@@ -258,23 +278,16 @@ export const appService = {
     }
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      state.session.currentUser = user
-        ? {
-            id: user.uid,
-            nome: user.displayName,
-            email: user.email,
-            role: "treasurer"
-          }
-        : null;
+      authenticatedUser = user;
+      state.session.currentUser = null;
 
       if (user) {
         subscribeProtectedData();
       } else {
         clearDataSubscriptions();
         resetDataState();
+        emit();
       }
-
-      emit();
     });
 
     return () => {
@@ -288,7 +301,22 @@ export const appService = {
       return localDb.signInTreasurer();
     }
     const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
+    const byUid = await getDoc(doc(db, COLLECTIONS.users, result.user.uid));
+    if (byUid.exists() && byUid.data()?.role === "treasurer") {
+      return result.user;
+    }
+
+    if (result.user.email) {
+      const byEmail = await getDocs(
+        query(collection(db, COLLECTIONS.users), where("email", "==", result.user.email), where("role", "==", "treasurer"))
+      );
+      if (!byEmail.empty) {
+        return result.user;
+      }
+    }
+
+    await signOut(auth);
+    throw new Error("Sua conta Google nao esta aprovada para usar a area da tesouraria.");
   },
 
   async signOutTreasurer() {

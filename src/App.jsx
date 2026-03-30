@@ -9,7 +9,7 @@ import { FilesPage } from "./pages/FilesPage";
 function ProtectedTreasurerRoute({ element }) {
   const { loading, session } = useAppContext();
   if (loading) return <div className="screen-center">Carregando...</div>;
-  if (!session.currentUser) return <Navigate to="/" replace />;
+  if (!session.currentUser || session.currentUser.role !== "treasurer") return <Navigate to="/" replace />;
   return element;
 }
 

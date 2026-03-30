@@ -4,11 +4,16 @@ import { useAppContext } from "../context/AppContext";
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const { actions, session, message } = useAppContext();
+  const { actions, session, message, setMessage } = useAppContext();
 
   async function handleGoogleLogin() {
-    await actions.signInTreasurer();
-    navigate("/app");
+    try {
+      setMessage("");
+      await actions.signInTreasurer();
+      navigate("/app");
+    } catch (error) {
+      setMessage(error?.message || "Nao foi possivel entrar agora.");
+    }
   }
 
   return (
