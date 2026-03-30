@@ -1667,15 +1667,18 @@ export const appService = {
     const accessRef = doc(db, COLLECTIONS.assistantAccess, assistantAccessToken);
     const accessSnapshot = await getDoc(accessRef);
     const existingData = accessSnapshot.exists() ? accessSnapshot.data() : {};
-    const pinHash = existingData.pinHash || (await hashPin(assistantPin));
+    const assistantPinHash = await hashPin(assistantPin);
+    const shouldResyncPin = String(existingData.pinHash || "") !== String(assistantPinHash || "");
+    const nextUpdatedAt = shouldResyncPin ? new Date().toISOString() : existingData.updatedAt || new Date().toISOString();
+    const pinHash = shouldResyncPin ? assistantPinHash : existingData.pinHash || assistantPinHash;
     await updateDoc(assistantDocRef, { accessToken: assistantAccessToken });
     await setDoc(
       accessRef,
       buildAssistantPortalRecord(latestAssistantUser, pinHash, {
-        failedAttempts: Number(existingData.failedAttempts || 0),
-        isBlocked: Boolean(existingData.isBlocked),
-        blockedAt: existingData.blockedAt || "",
-        updatedAt: existingData.updatedAt || new Date().toISOString()
+        failedAttempts: shouldResyncPin ? 0 : Number(existingData.failedAttempts || 0),
+        isBlocked: shouldResyncPin ? false : Boolean(existingData.isBlocked),
+        blockedAt: shouldResyncPin ? "" : existingData.blockedAt || "",
+        updatedAt: nextUpdatedAt
       }),
       { merge: true }
     );
@@ -1693,7 +1696,14 @@ export const appService = {
       })
     );
 
-    return buildAssistantPortalResponse(latestAssistantUser, existingData);
+    return buildAssistantPortalResponse(latestAssistantUser, {
+      ...existingData,
+      pinHash,
+      failedAttempts: shouldResyncPin ? 0 : Number(existingData.failedAttempts || 0),
+      isBlocked: shouldResyncPin ? false : Boolean(existingData.isBlocked),
+      blockedAt: shouldResyncPin ? "" : existingData.blockedAt || "",
+      updatedAt: nextUpdatedAt
+    });
   },
 
   async updateAssistantPortalPin(assistantUser, nextPin) {
@@ -1727,21 +1737,10 @@ export const appService = {
     localStorage.removeItem(`acms-assistant-unlocked:${assistantAccessToken}`);
     window.dispatchEvent(new CustomEvent("acms-assistant-public-updated"));
 
-    return {
-      assistantLink,
-      assistantPin: normalizedPin,
-      assistantAccessToken,
-      failedAttempts: 0,
-      isBlocked: false,
-      blockedAt: "",
-      updatedAt: payload.assistant?.updatedAt || new Date().toISOString(),
-      statusLabel: "Ativo",
-      shareMessage: buildAssistantShareMessage({
-        assistantName: assistantUser.nome,
-        assistantLink,
-        assistantPin: normalizedPin
-      })
-    };
+    return this.getAssistantPortalAccess({
+      ...assistantUser,
+      pin: normalizedPin
+    });
   },
 
   async markAuthorizationDelivered(authorization, accessToken = "") {
