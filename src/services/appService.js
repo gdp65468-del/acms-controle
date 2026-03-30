@@ -46,6 +46,10 @@ function getAssistantSessionStorageKey(token = ASSISTANT_PORTAL_ID) {
   return `acms-assistant-unlocked:${token}`;
 }
 
+function shouldUseAssistantPortalApi(token = ASSISTANT_PORTAL_ID) {
+  return String(token || ASSISTANT_PORTAL_ID) === ASSISTANT_PORTAL_ID;
+}
+
 function getDriveUploadSessionStorageKey(sessionId) {
   return `acms-drive-upload:${sessionId}`;
 }
@@ -1749,8 +1753,8 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.subscribeAssistantAccess(token, callback);
     }
-    if (isFirebasePublicContext()) {
-      const resolvedToken = token || ASSISTANT_PORTAL_ID;
+    const resolvedToken = token || ASSISTANT_PORTAL_ID;
+    if (shouldUseAssistantPortalApi(resolvedToken) || isFirebasePublicContext()) {
       let active = true;
 
       const emit = async () => {
@@ -1799,8 +1803,6 @@ export const appService = {
         window.clearInterval(timer);
       };
     }
-    const resolvedToken = token || ASSISTANT_PORTAL_ID;
-
     const state = { assistantUser: null, authorizations: [] };
     const emit = () =>
       callback({
@@ -1849,13 +1851,14 @@ export const appService = {
     if (!assistantUser) {
       throw new Error("Nenhum usuario auxiliar configurado.");
     }
-    if (firebaseEnabled && isFirebasePublicContext()) {
+    const resolvedToken = token || ASSISTANT_PORTAL_ID;
+    if (firebaseEnabled && (shouldUseAssistantPortalApi(resolvedToken) || isFirebasePublicContext())) {
       const payload = await apiRequest("/api/assistant/unlock", {
         method: "POST",
         body: { pin }
       });
       localStorage.setItem(
-        getAssistantSessionStorageKey(token || ASSISTANT_PORTAL_ID),
+        getAssistantSessionStorageKey(resolvedToken),
         JSON.stringify({
           token: payload.sessionToken,
           sessionVersion: payload.portal?.sessionVersion || "",
@@ -1878,14 +1881,14 @@ export const appService = {
     }
 
     localStorage.setItem(
-      `acms-assistant-unlocked:${token || assistantUser.accessToken || ASSISTANT_PORTAL_ID}`,
+      getAssistantSessionStorageKey(token || assistantUser.accessToken || ASSISTANT_PORTAL_ID),
       String(assistantUser.updatedAt || "ok")
     );
     return true;
   },
 
   isAssistantUnlocked(token = ASSISTANT_PORTAL_ID, assistantUser = null) {
-    if (firebaseEnabled && isFirebasePublicContext()) {
+    if (firebaseEnabled && (shouldUseAssistantPortalApi(token) || isFirebasePublicContext())) {
       if (assistantUser?.isBlocked) return false;
       const storedValue = readStoredJson(getAssistantSessionStorageKey(token));
       if (!storedValue?.token) return false;
