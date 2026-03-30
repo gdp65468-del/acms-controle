@@ -8,7 +8,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { SummaryCard } from "../components/SummaryCard";
 import { Icon } from "../components/Icon";
 import { useAppContext } from "../context/AppContext";
-import { acmsLaunchLabel, formatCurrency, formatDate, formatMonthYear } from "../utils/format";
+import { acmsLaunchLabel, formatCurrency, formatDate, formatMonthYear, getOutstandingAmount } from "../utils/format";
 
 export function TreasurerPage() {
   const { advances, users, authorizations, history, session, actions } = useAppContext();
@@ -22,6 +22,9 @@ export function TreasurerPage() {
   const [moduleTab, setModuleTab] = useState("pesquisar");
   const [assistantPortalData, setAssistantPortalData] = useState(null);
   const [assistantPortalFeedback, setAssistantPortalFeedback] = useState("");
+  const [assistantPinDraft, setAssistantPinDraft] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState("success");
   const topRef = useRef(null);
   const listRef = useRef(null);
   const selectedAdvance = advances.find((item) => item.id === selectedAdvanceId) || advances[0];
@@ -39,9 +42,18 @@ export function TreasurerPage() {
     if (!assistantUser) return;
     actions
       .getAssistantPortalAccess(assistantUser)
-      .then((data) => setAssistantPortalData(data))
+      .then((data) => {
+        setAssistantPortalData(data);
+        setAssistantPinDraft(data.assistantPin || "");
+      })
       .catch(() => {});
   }, [actions, assistantUser]);
+
+  useEffect(() => {
+    if (!toastMessage) return undefined;
+    const timeout = window.setTimeout(() => setToastMessage(""), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
 
   const totals = useMemo(() => {
     return advances.reduce(
@@ -97,22 +109,61 @@ export function TreasurerPage() {
     setSelectedAdvanceId(created.id);
     setLastCreatedAdvanceId(created.id);
     setDetailTab("resumo");
+    setToastType("success");
+    setToastMessage("Adiantamento salvo com sucesso.");
   }
 
   async function handleCreateMember(payload) {
-    return actions.createMember(payload);
+    const member = await actions.createMember(payload);
+    setToastType("success");
+    setToastMessage("Responsavel cadastrado com sucesso.");
+    return member;
+  }
+
+  async function handleDeleteMember(member) {
+    await actions.deleteMember(member.id);
+    setToastType("success");
+    setToastMessage("Responsavel excluido com sucesso.");
   }
 
   async function handleSaveSettlement(payload) {
     await actions.saveSettlement(selectedAdvance, payload);
+    setToastType("success");
+    setToastMessage("Controle salvo com sucesso.");
   }
 
   async function handleAuthorize(payload) {
-    return actions.createAuthorization(payload);
+    if (payload.authorizationId) {
+      const updated = await actions.updateAuthorization(payload);
+      setToastType("success");
+      setToastMessage("Repasse atualizado com sucesso.");
+      return updated;
+    }
+    const created = await actions.createAuthorization(payload);
+    setToastType("success");
+    setToastMessage("Repasse autorizado com sucesso.");
+    return created;
+  }
+
+  async function handleResendAuthorization(payload) {
+    const resent = await actions.updateAuthorization(payload, { resent: true });
+    setToastType("success");
+    setToastMessage("Repasse reenviado ao auxiliar.");
+    return resent;
+  }
+
+  async function handleDeleteAuthorization(authorization) {
+    await actions.deleteAuthorization(authorization.id);
+    setToastType("success");
+    setToastMessage("Repasse excluido com sucesso.");
   }
 
   async function handleToggleAcmsLaunch(advance, launched) {
     await actions.toggleAcmsLaunch(advance.id, launched);
+    setToastType("success");
+    setToastMessage(
+      launched ? "Adiantamento marcado como lancado no ACMS." : "Marcacao de lancamento ACMS removida."
+    );
   }
 
   async function handleSignOut() {
@@ -125,9 +176,14 @@ export function TreasurerPage() {
     try {
       const data = await actions.getAssistantPortalAccess(assistantUser);
       setAssistantPortalData(data);
+      setAssistantPinDraft(data.assistantPin || "");
       setAssistantPortalFeedback("Acesso do auxiliar atualizado com sucesso.");
+      setToastType("success");
+      setToastMessage("Acesso do auxiliar atualizado com sucesso.");
     } catch (error) {
       setAssistantPortalFeedback(error.message);
+      setToastType("error");
+      setToastMessage(error.message);
     }
   }
 
@@ -135,8 +191,29 @@ export function TreasurerPage() {
     try {
       await navigator.clipboard.writeText(value);
       setAssistantPortalFeedback(`${label} copiado com sucesso.`);
+      setToastType("success");
+      setToastMessage(`${label} copiado com sucesso.`);
     } catch {
       setAssistantPortalFeedback(`Nao foi possivel copiar ${label.toLowerCase()}.`);
+      setToastType("error");
+      setToastMessage(`Nao foi possivel copiar ${label.toLowerCase()}.`);
+    }
+  }
+
+  async function handleSaveAssistantPin() {
+    if (!assistantUser) return;
+    setAssistantPortalFeedback("");
+    try {
+      const data = await actions.updateAssistantPortalPin(assistantUser, assistantPinDraft);
+      setAssistantPortalData(data);
+      setAssistantPinDraft(data.assistantPin || "");
+      setAssistantPortalFeedback("Novo PIN salvo com sucesso. O acesso do auxiliar foi liberado.");
+      setToastType("success");
+      setToastMessage("Novo PIN salvo com sucesso.");
+    } catch (error) {
+      setAssistantPortalFeedback(error.message);
+      setToastType("error");
+      setToastMessage(error.message);
     }
   }
 
@@ -146,8 +223,15 @@ export function TreasurerPage() {
     if (!confirmed) return;
     const currentIndex = advances.findIndex((item) => item.id === selectedAdvance.id);
     const nextAdvance = advances[currentIndex + 1] || advances[currentIndex - 1] || null;
-    await actions.deleteAdvance(selectedAdvance.id);
-    setSelectedAdvanceId(nextAdvance?.id || "");
+    try {
+      await actions.deleteAdvance(selectedAdvance.id);
+      setSelectedAdvanceId(nextAdvance?.id || "");
+      setToastType("success");
+      setToastMessage("Adiantamento excluido com sucesso.");
+    } catch (error) {
+      setToastType("error");
+      setToastMessage(error.message || "Nao foi possivel excluir o adiantamento.");
+    }
   }
 
   function scrollToRef(ref) {
@@ -188,9 +272,21 @@ export function TreasurerPage() {
 
   const selectedHistory = history.filter((item) => item.advanceId === selectedAdvance?.id).slice(0, 8);
   const selectedAuthorization = authorizations.find((item) => item.advanceId === selectedAdvance?.id);
+  const selectedOutstandingAmount = selectedAdvance ? getOutstandingAmount(selectedAdvance) : 0;
 
   return (
     <main className="dashboard-shell">
+      {toastMessage ? (
+        <div className={`files-toast ${toastType === "error" ? "is-error" : "is-success"}`}>
+          <div>
+            <strong>{toastType === "error" ? "Nao foi possivel concluir a acao" : "Acao concluida"}</strong>
+            <p>{toastMessage}</p>
+          </div>
+          <button type="button" className="files-toast-close" onClick={() => setToastMessage("")}>
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      ) : null}
       <aside className="dashboard-sidebar">
         <div className="brand-mark">AC</div>
         <nav className="sidebar-nav">
@@ -338,6 +434,7 @@ export function TreasurerPage() {
                 currentUser={session.currentUser}
                 onSave={handleCreateAdvance}
                 onCreateMember={handleCreateMember}
+                onDeleteMember={handleDeleteMember}
               />
             ) : null}
 
@@ -356,14 +453,36 @@ export function TreasurerPage() {
                     <strong>{assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}</strong>
                   </div>
                   <div>
-                    <span>PIN atual</span>
-                    <strong>{assistantPortalData?.assistantPin || assistantUser?.pin || "1234"}</strong>
+                    <span>Status do acesso</span>
+                    <strong>{assistantPortalData?.statusLabel || "Ativo"}</strong>
+                  </div>
+                  <div>
+                    <span>Tentativas incorretas</span>
+                    <strong>{assistantPortalData?.failedAttempts || 0} / 4</strong>
+                  </div>
+                  <div>
+                    <span>Ultima atualizacao</span>
+                    <strong>{assistantPortalData?.updatedAt ? formatDate(assistantPortalData.updatedAt) : "Agora"}</strong>
                   </div>
                 </div>
 
+                <label className="full-span">
+                  Novo PIN do auxiliar
+                  <input
+                    inputMode="numeric"
+                    maxLength="4"
+                    value={assistantPinDraft}
+                    onChange={(event) => setAssistantPinDraft(event.target.value.replace(/\D/g, ""))}
+                    placeholder="Digite 4 numeros"
+                  />
+                </label>
+
                 <div className="actions-row">
-                  <button className="button-primary" type="button" onClick={handlePrepareAssistantPortal}>
-                    Gerar ou atualizar acesso
+                  <button className="button-primary" type="button" onClick={handleSaveAssistantPin}>
+                    Salvar novo PIN
+                  </button>
+                  <button className="button-ghost" type="button" onClick={handlePrepareAssistantPortal}>
+                    Atualizar acesso
                   </button>
                   <button
                     className="button-ghost"
@@ -379,6 +498,19 @@ export function TreasurerPage() {
                   >
                     Copiar PIN
                   </button>
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() =>
+                      handleCopyAssistantPortal(
+                        assistantPortalData?.shareMessage ||
+                          `Acesso do Tesoureiro Auxiliar\n\nLink: ${assistantPortalData?.assistantLink || `${window.location.origin}/auxiliar`}\nPIN: ${assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}`,
+                        "Mensagem"
+                      )
+                    }
+                  >
+                    Copiar mensagem pronta
+                  </button>
                   <a className="button-ghost" href="/auxiliar" target="_blank" rel="noreferrer">
                     Abrir area do auxiliar
                   </a>
@@ -386,10 +518,9 @@ export function TreasurerPage() {
 
                 {assistantPortalFeedback ? <p className="helper-text full-span">{assistantPortalFeedback}</p> : null}
 
-                <div className="callout-box full-span">
-                  <strong>Como funciona agora</strong>
-                  <p>O auxiliar usa sempre o mesmo link em <strong>/auxiliar</strong> e o mesmo PIN.</p>
-                  <p>As novas autorizacoes de repasse aparecem todas nessa mesma area, sem precisar de link por adiantamento.</p>
+                <div className="callout-box full-span assistant-share-box">
+                  <strong>Mensagem pronta para envio</strong>
+                  <pre>{assistantPortalData?.shareMessage || ""}</pre>
                 </div>
               </section>
             ) : null}
@@ -525,7 +656,7 @@ export function TreasurerPage() {
                   </div>
                   <div>
                     <span>PIN</span>
-                    <strong>{assistantPortalData?.assistantPin || assistantUser?.pin || "1234"}</strong>
+                    <strong>{assistantPortalData?.assistantPin || assistantPinDraft || assistantUser?.pin || "1234"}</strong>
                   </div>
                   <div>
                     <span>Ordens abertas</span>
@@ -534,6 +665,14 @@ export function TreasurerPage() {
                   <div>
                     <span>Ordens concluidas</span>
                     <strong>{authorizations.filter((item) => item.assistantId === assistantUser?.id && item.status === "ENTREGUE").length}</strong>
+                  </div>
+                  <div>
+                    <span>Status</span>
+                    <strong>{assistantPortalData?.statusLabel || "Ativo"}</strong>
+                  </div>
+                  <div>
+                    <span>Tentativas</span>
+                    <strong>{assistantPortalData?.failedAttempts || 0} / 4</strong>
                   </div>
                 </div>
               </section>
@@ -597,8 +736,8 @@ export function TreasurerPage() {
                       <strong>{formatCurrency(selectedAdvance.totalComprovado)}</strong>
                     </div>
                     <div>
-                      <span>Diferenca</span>
-                      <strong>{formatCurrency(selectedAdvance.valor - Number(selectedAdvance.totalComprovado || 0))}</strong>
+                      <span>Saldo faltante</span>
+                      <strong>{formatCurrency(selectedOutstandingAmount)}</strong>
                     </div>
                     <div className="full-span">
                       <span>Descricao</span>
@@ -645,7 +784,14 @@ export function TreasurerPage() {
                 {detailTab === "repasse" ? (
                   <div className="detail-tab-panel">
                     {selectedAdvance && assistantUser ? (
-                      <AuthorizationForm advance={selectedAdvance} assistantUser={assistantUser} onSave={handleAuthorize} />
+                      <AuthorizationForm
+                        advance={selectedAdvance}
+                        assistantUser={assistantUser}
+                        existingAuthorization={selectedAuthorization}
+                        onSave={handleAuthorize}
+                        onResend={handleResendAuthorization}
+                        onDelete={handleDeleteAuthorization}
+                      />
                     ) : null}
                     {selectedAuthorization ? (
                       <div className="callout-box">

@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
-import { formatCurrency } from "../utils/format";
+import { useEffect, useMemo, useState } from "react";
+import { formatCurrency, getOutstandingAmount } from "../utils/format";
 
 export function SettlementForm({ advance, onSave }) {
   const [totalComprovado, setTotalComprovado] = useState(advance.totalComprovado || "");
   const [justificativa, setJustificativa] = useState(advance.justificativa || "");
   const [lancadoAcms, setLancadoAcms] = useState(Boolean(advance.lancadoAcms));
   const [error, setError] = useState("");
+  const outstandingAmount = useMemo(
+    () => getOutstandingAmount({ ...advance, totalComprovado }),
+    [advance, totalComprovado]
+  );
 
   useEffect(() => {
     setTotalComprovado(advance.totalComprovado || "");
@@ -41,6 +45,17 @@ export function SettlementForm({ advance, onSave }) {
         </div>
       </div>
 
+      <div className="detail-grid compact-grid full-span">
+        <div>
+          <span>Valor comprovado</span>
+          <strong>{formatCurrency(totalComprovado || 0)}</strong>
+        </div>
+        <div>
+          <span>Saldo faltante</span>
+          <strong>{formatCurrency(outstandingAmount)}</strong>
+        </div>
+      </div>
+
       <label>
         Valor utilizado
         <input
@@ -71,6 +86,13 @@ export function SettlementForm({ advance, onSave }) {
         Este sistema nao guarda nota fiscal. Ele serve para controlar o adiantamento e lembrar o lancamento no
         acmsnet.org.
       </p>
+
+      {outstandingAmount > 0 ? (
+        <div className="notice-banner full-span">
+          Ainda faltam {formatCurrency(outstandingAmount)} para fechar este adiantamento. Enquanto houver saldo faltante,
+          ele nao sera marcado como prestado.
+        </div>
+      ) : null}
 
       {error ? <p className="form-error full-span">{error}</p> : null}
 

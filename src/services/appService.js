@@ -2,6 +2,7 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -32,6 +33,7 @@ const COLLECTIONS = {
 };
 
 const ASSISTANT_PORTAL_ID = "principal";
+const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 
 async function saveHistory(advanceId, type, message) {
   await addDoc(collection(db, COLLECTIONS.history), {
@@ -54,6 +56,10 @@ function getAssistantPin(assistantUser) {
   return String(assistantUser?.pin || "1234");
 }
 
+function normalizeAssistantPin(pin) {
+  return String(pin || "").replace(/\D/g, "").slice(0, 4);
+}
+
 async function hashPin(pin) {
   const value = String(pin || "");
   if (!value) return "";
@@ -66,6 +72,95 @@ async function hashPin(pin) {
 
 function getAssistantAccessToken() {
   return ASSISTANT_PORTAL_ID;
+}
+
+function getAssistantPortalLink() {
+  return typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
+}
+
+function buildAssistantShareMessage({ assistantName, assistantLink, assistantPin }) {
+  return [
+    "Acesso do Tesoureiro Auxiliar",
+    "",
+    `Ola, ${assistantName || "tesoureiro auxiliar"}.`,
+    "Segue o acesso para acompanhar e confirmar os repasses autorizados da tesouraria.",
+    "",
+    `Link: ${assistantLink}`,
+    `PIN de acesso: ${assistantPin}`,
+    "",
+    "Orientacoes:",
+    "- Abra o link acima no celular ou computador.",
+    "- Digite o PIN exatamente como enviado.",
+    "- Nao compartilhe este PIN com outras pessoas.",
+    "",
+    "Se o acesso for bloqueado por tentativas incorretas, solicite um novo PIN a tesouraria."
+  ].join("\n");
+}
+
+function buildAssistantPortalRecord(assistantUser, pinHash, overrides = {}) {
+  return {
+    assistantId: assistantUser.id,
+    assistantName: assistantUser.nome,
+    pinHash,
+    failedAttempts: 0,
+    isBlocked: false,
+    blockedAt: "",
+    updatedAt: new Date().toISOString(),
+    ...overrides
+  };
+}
+
+function buildAssistantPortalResponse(assistantUser, accessData = {}) {
+  const assistantLink = getAssistantPortalLink();
+  const assistantPin = getAssistantPin(assistantUser);
+  const failedAttempts = Number(accessData.failedAttempts || 0);
+  const isBlocked = Boolean(accessData.isBlocked);
+
+  return {
+    assistantLink,
+    assistantPin,
+    assistantAccessToken: getAssistantAccessToken(assistantUser),
+    failedAttempts,
+    isBlocked,
+    blockedAt: accessData.blockedAt || "",
+    updatedAt: accessData.updatedAt || "",
+    statusLabel: isBlocked ? "Bloqueado por tentativas" : "Ativo",
+    shareMessage: buildAssistantShareMessage({
+      assistantName: assistantUser.nome,
+      assistantLink,
+      assistantPin
+    })
+  };
+}
+
+async function registerAssistantFailedAttemptInFirebase(assistantUser, accessToken) {
+  const accessRef = doc(db, COLLECTIONS.assistantAccess, accessToken);
+  const accessSnapshot = await getDoc(accessRef);
+  if (!accessSnapshot.exists()) {
+    throw new Error("Acesso do auxiliar nao encontrado. Solicite um novo PIN a tesouraria.");
+  }
+
+  const currentData = accessSnapshot.data();
+  if (currentData.isBlocked) {
+    throw new Error("Acesso bloqueado. Solicite um novo PIN a tesouraria.");
+  }
+
+  const failedAttempts = Number(currentData.failedAttempts || 0) + 1;
+  const isBlocked = failedAttempts >= ASSISTANT_MAX_PIN_ATTEMPTS;
+  const payload = {
+    failedAttempts,
+    isBlocked,
+    blockedAt: isBlocked ? new Date().toISOString() : ""
+  };
+
+  await updateDoc(accessRef, payload);
+
+  if (isBlocked) {
+    throw new Error("Acesso bloqueado apos 4 tentativas. Solicite um novo PIN a tesouraria.");
+  }
+
+  const remainingAttempts = ASSISTANT_MAX_PIN_ATTEMPTS - failedAttempts;
+  throw new Error(`PIN invalido. Restam ${remainingAttempts} tentativa(s).`);
 }
 
 function buildAssistantPublicOrder(authorization, advance = null) {
@@ -170,17 +265,20 @@ async function syncAssistantAccessInFirebase({ assistantUser, authorization, adv
   const accessToken = getAssistantAccessToken(assistantUser);
   const assistantPin = getAssistantPin(assistantUser);
   const pinHash = await hashPin(assistantPin);
+  const accessRef = doc(db, COLLECTIONS.assistantAccess, accessToken);
+  const accessSnapshot = await getDoc(accessRef);
+  const existingData = accessSnapshot.exists() ? accessSnapshot.data() : {};
 
   await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken });
 
   await setDoc(
-    doc(db, COLLECTIONS.assistantAccess, accessToken),
-    {
-      assistantId: assistantUser.id,
-      assistantName: assistantUser.nome,
-      pinHash,
-      updatedAt: new Date().toISOString()
-    },
+    accessRef,
+    buildAssistantPortalRecord(assistantUser, pinHash, {
+      failedAttempts: Number(existingData.failedAttempts || 0),
+      isBlocked: Boolean(existingData.isBlocked),
+      blockedAt: existingData.blockedAt || "",
+      updatedAt: existingData.updatedAt || new Date().toISOString()
+    }),
     { merge: true }
   );
 
@@ -418,6 +516,26 @@ export const appService = {
     };
     const docRef = await addDoc(collection(db, COLLECTIONS.users), record);
     return { id: docRef.id, ...record };
+  },
+
+  async deleteMember(memberId) {
+    if (!firebaseEnabled) {
+      return localDb.deleteMember(memberId);
+    }
+
+    const memberRef = doc(db, COLLECTIONS.users, memberId);
+    const memberSnapshot = await getDoc(memberRef);
+    if (!memberSnapshot.exists() || memberSnapshot.data()?.role !== "member") {
+      throw new Error("Responsavel nao encontrado.");
+    }
+
+    const linkedAdvances = await getDocs(query(collection(db, COLLECTIONS.advances), where("usuarioId", "==", memberId)));
+    if (!linkedAdvances.empty) {
+      throw new Error("Nao e possivel excluir este responsavel porque ele ja possui adiantamentos vinculados.");
+    }
+
+    await deleteDoc(memberRef);
+    return { id: memberSnapshot.id, ...memberSnapshot.data() };
   },
 
   async createAdvance(payload) {
@@ -795,33 +913,109 @@ export const appService = {
     };
   },
 
+  async updateAuthorization(payload, { resent = false } = {}) {
+    if (!firebaseEnabled) {
+      let audioUrl = payload.existingAuthorization?.audioUrl || "";
+      let audioName = payload.existingAuthorization?.audioName || "";
+      if (payload.audioFile) {
+        audioUrl = await fileToDataUrl(payload.audioFile);
+        audioName = payload.audioFile.name;
+      }
+      return localDb.updateAuthorization(
+        {
+          authorizationId: payload.authorizationId,
+          description: payload.description,
+          audioUrl,
+          audioName
+        },
+        { resent }
+      );
+    }
+
+    const authorizationRef = doc(db, COLLECTIONS.authorizations, payload.authorizationId);
+    const authorizationSnapshot = await getDoc(authorizationRef);
+    if (!authorizationSnapshot.exists()) {
+      throw new Error("Repasse nao encontrado.");
+    }
+
+    const currentAuthorization = { id: authorizationSnapshot.id, ...authorizationSnapshot.data() };
+    let audioUrl = currentAuthorization.audioUrl || "";
+    let audioName = currentAuthorization.audioName || "";
+    if (payload.audioFile) {
+      const fileRef = ref(storage, `audios/${currentAuthorization.advanceId}/${Date.now()}-${payload.audioFile.name}`);
+      await uploadBytes(fileRef, payload.audioFile);
+      audioUrl = await getDownloadURL(fileRef);
+      audioName = payload.audioFile.name;
+    }
+
+    const nextRecord = {
+      description: payload.description || "",
+      audioUrl,
+      audioName,
+      status: "AUTORIZADO",
+      deliveredAt: ""
+    };
+
+    await updateDoc(authorizationRef, nextRecord);
+    const nextAuthorization = { ...currentAuthorization, ...nextRecord };
+    const accessToken = currentAuthorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
+    await setDoc(
+      doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", currentAuthorization.id),
+      buildAssistantPublicOrder(nextAuthorization)
+    );
+    await saveHistory(
+      currentAuthorization.advanceId,
+      resent ? "REPASSE_REENVIADO" : "REPASSE_ATUALIZADO",
+      resent
+        ? "Repasse reenviado para o tesoureiro auxiliar."
+        : "Repasse atualizado para o tesoureiro auxiliar."
+    );
+    return nextAuthorization;
+  },
+
+  async deleteAuthorization(authorizationId) {
+    if (!firebaseEnabled) {
+      return localDb.deleteAuthorization(authorizationId);
+    }
+
+    const authorizationRef = doc(db, COLLECTIONS.authorizations, authorizationId);
+    const authorizationSnapshot = await getDoc(authorizationRef);
+    if (!authorizationSnapshot.exists()) {
+      throw new Error("Repasse nao encontrado.");
+    }
+
+    const authorization = { id: authorizationSnapshot.id, ...authorizationSnapshot.data() };
+    await deleteDoc(authorizationRef);
+    const accessToken = authorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
+    await deleteDoc(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", authorizationId));
+    await saveHistory(authorization.advanceId, "REPASSE_EXCLUIDO", "Repasse removido da area do auxiliar.");
+    return authorization;
+  },
+
   async getAssistantPortalAccess(assistantUser) {
     if (!assistantUser) {
       throw new Error("Cadastre um tesoureiro auxiliar para gerar o acesso.");
     }
 
-    const assistantLink = typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
-    const assistantPin = getAssistantPin(assistantUser);
-    const assistantAccessToken = getAssistantAccessToken(assistantUser);
-
     if (!firebaseEnabled) {
-      return {
-        assistantLink,
-        assistantPin,
-        assistantAccessToken
-      };
+      return localDb.getAssistantPortalAccess(assistantUser);
     }
 
+    const assistantAccessToken = getAssistantAccessToken(assistantUser);
+    const assistantPin = getAssistantPin(assistantUser);
     const pinHash = await hashPin(assistantPin);
+    const accessRef = doc(db, COLLECTIONS.assistantAccess, assistantAccessToken);
+    const accessSnapshot = await getDoc(accessRef);
+    const existingData = accessSnapshot.exists() ? accessSnapshot.data() : {};
     await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), { accessToken: assistantAccessToken });
     await setDoc(
-      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken),
-      {
-        assistantId: assistantUser.id,
-        assistantName: assistantUser.nome,
-        pinHash,
-        updatedAt: new Date().toISOString()
-      },
+      accessRef,
+      buildAssistantPortalRecord(assistantUser, pinHash, {
+        failedAttempts: Number(existingData.failedAttempts || 0),
+        isBlocked: Boolean(existingData.isBlocked),
+        blockedAt: existingData.blockedAt || "",
+        updatedAt: existingData.updatedAt || new Date().toISOString()
+      }),
       { merge: true }
     );
 
@@ -838,10 +1032,58 @@ export const appService = {
       })
     );
 
+    return buildAssistantPortalResponse(assistantUser, existingData);
+  },
+
+  async updateAssistantPortalPin(assistantUser, nextPin) {
+    if (!assistantUser) {
+      throw new Error("Cadastre um tesoureiro auxiliar para configurar o acesso.");
+    }
+
+    const normalizedPin = normalizeAssistantPin(nextPin);
+    if (normalizedPin.length !== 4) {
+      throw new Error("Informe um PIN de 4 digitos.");
+    }
+
+    const assistantLink = getAssistantPortalLink();
+    const assistantAccessToken = getAssistantAccessToken(assistantUser);
+
+    if (!firebaseEnabled) {
+      return localDb.updateAssistantPortalPin(assistantUser, normalizedPin);
+    }
+
+    const pinHash = await hashPin(normalizedPin);
+    await updateDoc(doc(db, COLLECTIONS.users, assistantUser.id), {
+      pin: normalizedPin,
+      accessToken: assistantAccessToken
+    });
+    await setDoc(
+      doc(db, COLLECTIONS.assistantAccess, assistantAccessToken),
+      buildAssistantPortalRecord(
+        {
+          ...assistantUser,
+          pin: normalizedPin
+        },
+        pinHash
+      ),
+      { merge: true }
+    );
+
+    localStorage.removeItem(`acms-assistant-unlocked:${assistantAccessToken}`);
+
     return {
       assistantLink,
-      assistantPin,
-      assistantAccessToken
+      assistantPin: normalizedPin,
+      assistantAccessToken,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: "",
+      statusLabel: "Ativo",
+      shareMessage: buildAssistantShareMessage({
+        assistantName: assistantUser.nome,
+        assistantLink,
+        assistantPin: normalizedPin
+      })
     };
   },
 
@@ -901,7 +1143,12 @@ export const appService = {
     const authorizationSnapshot = await getDocs(
       query(collection(db, COLLECTIONS.authorizations), where("advanceId", "==", advanceId))
     );
-    authorizationSnapshot.forEach((item) => batch.delete(item.ref));
+    authorizationSnapshot.forEach((item) => {
+      batch.delete(item.ref);
+      const authorization = item.data();
+      const accessToken = authorization.assistantAccessToken || ASSISTANT_PORTAL_ID;
+      batch.delete(doc(db, COLLECTIONS.assistantAccess, accessToken, "ordens", item.id));
+    });
     batch.delete(doc(db, COLLECTIONS.advances, advanceId));
     await batch.commit();
   },
@@ -924,7 +1171,14 @@ export const appService = {
     const unsubAccess = onSnapshot(
       accessRef,
       (snapshot) => {
-        state.assistantUser = snapshot.exists() ? { id: snapshot.id, ...snapshot.data(), accessToken: resolvedToken } : null;
+        state.assistantUser = snapshot.exists()
+          ? {
+              id: snapshot.id,
+              ...snapshot.data(),
+              accessToken: resolvedToken,
+              statusLabel: snapshot.data()?.isBlocked ? "Bloqueado por tentativas" : "Ativo"
+            }
+          : null;
         emit();
       },
       () => {
@@ -953,17 +1207,31 @@ export const appService = {
     if (!assistantUser) {
       throw new Error("Nenhum usuario auxiliar configurado.");
     }
+    if (assistantUser.isBlocked) {
+      throw new Error("Acesso bloqueado. Solicite um novo PIN a tesouraria.");
+    }
     const expectedHash = assistantUser.pinHash || (await hashPin(getAssistantPin(assistantUser)));
     const providedHash = await hashPin(pin);
     if (providedHash !== expectedHash) {
-      throw new Error("PIN invalido.");
+      if (!firebaseEnabled) {
+        return localDb.registerAssistantFailedAttempt(token || assistantUser.accessToken || ASSISTANT_PORTAL_ID);
+      }
+      return registerAssistantFailedAttemptInFirebase(assistantUser, token || assistantUser.accessToken || ASSISTANT_PORTAL_ID);
     }
-    localStorage.setItem(`acms-assistant-unlocked:${token || assistantUser.accessToken || ASSISTANT_PORTAL_ID}`, "true");
+
+    localStorage.setItem(
+      `acms-assistant-unlocked:${token || assistantUser.accessToken || ASSISTANT_PORTAL_ID}`,
+      String(assistantUser.updatedAt || "ok")
+    );
     return true;
   },
 
-  isAssistantUnlocked(token = ASSISTANT_PORTAL_ID) {
-    return localStorage.getItem(`acms-assistant-unlocked:${token}`) === "true";
+  isAssistantUnlocked(token = ASSISTANT_PORTAL_ID, assistantUser = null) {
+    if (assistantUser?.isBlocked) return false;
+    const storedValue = localStorage.getItem(`acms-assistant-unlocked:${token}`);
+    if (!storedValue) return false;
+    if (!assistantUser?.updatedAt) return Boolean(storedValue);
+    return storedValue === String(assistantUser.updatedAt);
   },
 
   lockAssistant(token = ASSISTANT_PORTAL_ID) {

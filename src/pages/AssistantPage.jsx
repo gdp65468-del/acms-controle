@@ -29,6 +29,12 @@ function PinGate({ assistantUser, accessToken, onUnlock }) {
         <span className="eyebrow">Area do tesoureiro auxiliar</span>
         <h1>Entrar com PIN</h1>
         <p>Use o PIN de 4 digitos para abrir suas ordens autorizadas.</p>
+        {assistantUser?.isBlocked ? (
+          <div className="callout-box assistant-blocked-callout">
+            <strong>Acesso bloqueado</strong>
+            <p>Este acesso foi bloqueado por 4 tentativas incorretas. Solicite um novo PIN a tesouraria.</p>
+          </div>
+        ) : null}
         <form className="pin-form" onSubmit={handleSubmit}>
           <input
             inputMode="numeric"
@@ -37,13 +43,18 @@ function PinGate({ assistantUser, accessToken, onUnlock }) {
             value={pin}
             onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
             placeholder="0000"
+            disabled={assistantUser?.isBlocked}
           />
-          <button className="button-primary" type="submit">
+          <button className="button-primary" type="submit" disabled={assistantUser?.isBlocked}>
             Entrar
           </button>
         </form>
         {error ? <p className="form-error">{error}</p> : null}
-        <p className="helper-text">No modo demonstracao, o PIN inicial e 1234.</p>
+        {!assistantUser?.isBlocked ? (
+          <p className="helper-text">
+            Se errar o PIN 4 vezes, o acesso sera bloqueado e a tesouraria precisara gerar um novo.
+          </p>
+        ) : null}
       </section>
     </main>
   );
@@ -135,7 +146,7 @@ export function AssistantPage() {
     );
   }
 
-  if (!actions.isAssistantUnlocked(accessToken)) {
+  if (!actions.isAssistantUnlocked(accessToken, assistantUser)) {
     return <PinGate assistantUser={assistantUser} accessToken={accessToken} onUnlock={actions.unlockAssistant} />;
   }
 

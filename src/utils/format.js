@@ -43,13 +43,18 @@ export function computeDueDate(startDate, prazoDias) {
 }
 
 export function computeAdvanceStatus(advance) {
-  const hasReceipt = Number(advance.totalComprovado || 0) > 0;
+  const totalComprovado = Number(advance.totalComprovado || 0);
+  const totalAdvance = Number(advance.valor || 0);
   const hasJustification = Boolean(advance.justificativa?.trim());
-  if (hasReceipt) return "PRESTADO";
+  if (totalComprovado >= totalAdvance && totalAdvance > 0) return "PRESTADO";
   if (hasJustification) return "JUSTIFICADO";
   const dueDate = normalizeDateValue(advance.dataLimite);
   if (dueDate && dueDate < new Date()) return "ATRASADO";
   return "PENDENTE";
+}
+
+export function getOutstandingAmount(advance) {
+  return Math.max(0, Number(advance?.valor || 0) - Number(advance?.totalComprovado || 0));
 }
 
 export function statusLabel(status) {

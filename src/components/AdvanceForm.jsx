@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { computeDueDate, formatDate, toDateInputValue } from "../utils/format";
 
-export function AdvanceForm({ users, advances, currentUser, onSave, onCreateMember }) {
+export function AdvanceForm({ users, advances, currentUser, onSave, onCreateMember, onDeleteMember }) {
   const members = useMemo(() => users.filter((item) => item.role === "member"), [users]);
   const [form, setForm] = useState({
     usuarioId: "",
@@ -79,6 +79,27 @@ export function AdvanceForm({ users, advances, currentUser, onSave, onCreateMemb
     }
   }
 
+  async function handleDeleteMember() {
+    if (!form.usuarioId) return;
+    const selectedMember = members.find((item) => item.id === form.usuarioId);
+    if (!selectedMember) return;
+    const confirmed = window.confirm(`Excluir o cadastro de ${selectedMember.nome}?`);
+    if (!confirmed) return;
+    try {
+      setError("");
+      await onDeleteMember(selectedMember);
+      const nextMembers = members.filter((item) => item.id !== selectedMember.id);
+      setForm((current) => ({
+        ...current,
+        usuarioId: nextMembers[0]?.id || "",
+        usuarioNome: nextMembers[0]?.nome || "",
+        publicToken: nextMembers[0]?.publicToken || ""
+      }));
+    } catch (deleteError) {
+      setError(deleteError.message);
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
@@ -137,6 +158,9 @@ export function AdvanceForm({ users, advances, currentUser, onSave, onCreateMemb
           />
           <button className="button-ghost" type="button" onClick={handleCreateMember}>
             Adicionar
+          </button>
+          <button className="button-danger" type="button" onClick={handleDeleteMember} disabled={!form.usuarioId}>
+            Excluir
           </button>
         </div>
       </label>

@@ -12,6 +12,7 @@ import { computeAdvanceStatus, computeDueDate } from "../utils/format";
 
 const STORAGE_KEY = "acms-local-db";
 const ASSISTANT_PORTAL_ID = "principal";
+const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 
 function clone(data) {
   return JSON.parse(JSON.stringify(data));
@@ -25,6 +26,14 @@ function createSeed() {
     history: clone(mockHistory),
     fileFolders: clone(mockFileFolders),
     fileAssets: clone(mockFileAssets),
+    assistantAccess: {
+      assistantId: mockAuxiliaryUser.id,
+      assistantName: mockAuxiliaryUser.nome,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: "",
+      updatedAt: new Date().toISOString()
+    },
     session: {
       currentUser: clone(mockCurrentUser),
       assistantUser: clone(mockAuxiliaryUser)
@@ -46,6 +55,14 @@ function readStore() {
   parsed.history ||= [];
   parsed.fileFolders ||= clone(mockFileFolders);
   parsed.fileAssets ||= clone(mockFileAssets);
+  parsed.assistantAccess ||= {
+    assistantId: parsed.session?.assistantUser?.id || mockAuxiliaryUser.id,
+    assistantName: parsed.session?.assistantUser?.nome || mockAuxiliaryUser.nome,
+    failedAttempts: 0,
+    isBlocked: false,
+    blockedAt: "",
+    updatedAt: new Date().toISOString()
+  };
   parsed.fileFolders = parsed.fileFolders.map((item) => ({
     parentId: "",
     deletedAt: "",
@@ -129,7 +146,52 @@ function getFolderDescendantIds(folders, folderId) {
 
 function getAssistantByToken(store, token) {
   const resolvedToken = String(token || ASSISTANT_PORTAL_ID);
-  return store.users.find((item) => item.role === "assistant" && String(item.accessToken || ASSISTANT_PORTAL_ID) === resolvedToken);
+  const assistant = store.users.find((item) => item.role === "assistant" && String(item.accessToken || ASSISTANT_PORTAL_ID) === resolvedToken);
+  if (!assistant) return null;
+  return {
+    ...assistant,
+    failedAttempts: Number(store.assistantAccess?.failedAttempts || 0),
+    isBlocked: Boolean(store.assistantAccess?.isBlocked),
+    blockedAt: store.assistantAccess?.blockedAt || "",
+    updatedAt: store.assistantAccess?.updatedAt || "",
+    statusLabel: store.assistantAccess?.isBlocked ? "Bloqueado por tentativas" : "Ativo"
+  };
+}
+
+function getAssistantPortalLink() {
+  return typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
+}
+
+function buildAssistantShareMessage({ assistantName, assistantLink, assistantPin }) {
+  return [
+    "Acesso do Tesoureiro Auxiliar",
+    "",
+    `Ola, ${assistantName || "tesoureiro auxiliar"}.`,
+    "Segue o acesso para acompanhar e confirmar os repasses autorizados da tesouraria.",
+    "",
+    `Link: ${assistantLink}`,
+    `PIN de acesso: ${assistantPin}`,
+    "",
+    "Orientacoes:",
+    "- Abra o link acima no celular ou computador.",
+    "- Digite o PIN exatamente como enviado.",
+    "- Nao compartilhe este PIN com outras pessoas.",
+    "",
+    "Se o acesso for bloqueado por tentativas incorretas, solicite um novo PIN a tesouraria."
+  ].join("\n");
+}
+
+function updateAssistantAccessState(store, overrides = {}) {
+  store.assistantAccess = {
+    assistantId: store.session.assistantUser?.id || mockAuxiliaryUser.id,
+    assistantName: store.session.assistantUser?.nome || mockAuxiliaryUser.nome,
+    failedAttempts: 0,
+    isBlocked: false,
+    blockedAt: "",
+    updatedAt: new Date().toISOString(),
+    ...store.assistantAccess,
+    ...overrides
+  };
 }
 
 function getAssistantAccessSnapshot(store, token) {
@@ -190,6 +252,120 @@ export const localDb = {
     return readStore().session.assistantUser;
   },
 
+  getAssistantPortalAccess(assistantUser) {
+    const store = readStore();
+    const targetAssistant =
+      assistantUser || store.users.find((item) => item.role === "assistant") || store.session.assistantUser || null;
+    if (!targetAssistant) {
+      throw new Error("Cadastre um tesoureiro auxiliar para gerar o acesso.");
+    }
+
+    const storedAssistant = store.users.find((item) => item.id === targetAssistant.id);
+    if (storedAssistant) {
+      storedAssistant.accessToken = ASSISTANT_PORTAL_ID;
+    }
+    if (store.session.assistantUser?.id === targetAssistant.id) {
+      store.session.assistantUser.accessToken = ASSISTANT_PORTAL_ID;
+    }
+    updateAssistantAccessState(store, {
+      assistantId: targetAssistant.id,
+      assistantName: targetAssistant.nome
+    });
+    writeStore(store);
+    notify();
+    return {
+      assistantLink: getAssistantPortalLink(),
+      assistantPin: targetAssistant.pin || "1234",
+      assistantAccessToken: ASSISTANT_PORTAL_ID,
+      failedAttempts: Number(store.assistantAccess.failedAttempts || 0),
+      isBlocked: Boolean(store.assistantAccess.isBlocked),
+      blockedAt: store.assistantAccess.blockedAt || "",
+      statusLabel: store.assistantAccess.isBlocked ? "Bloqueado por tentativas" : "Ativo",
+      shareMessage: buildAssistantShareMessage({
+        assistantName: targetAssistant.nome,
+        assistantLink: getAssistantPortalLink(),
+        assistantPin: targetAssistant.pin || "1234"
+      })
+    };
+  },
+
+  updateAssistantPortalPin(assistantUser, nextPin) {
+    const store = readStore();
+    const targetAssistant =
+      assistantUser || store.users.find((item) => item.role === "assistant") || store.session.assistantUser || null;
+    const normalizedPin = String(nextPin || "").replace(/\D/g, "").slice(0, 4);
+    if (!targetAssistant) {
+      throw new Error("Cadastre um tesoureiro auxiliar para configurar o acesso.");
+    }
+    if (normalizedPin.length !== 4) {
+      throw new Error("Informe um PIN de 4 digitos.");
+    }
+
+    const storedAssistant = store.users.find((item) => item.id === targetAssistant.id);
+    if (storedAssistant) {
+      storedAssistant.pin = normalizedPin;
+      storedAssistant.accessToken = ASSISTANT_PORTAL_ID;
+    }
+    if (store.session.assistantUser?.id === targetAssistant.id) {
+      store.session.assistantUser.pin = normalizedPin;
+      store.session.assistantUser.accessToken = ASSISTANT_PORTAL_ID;
+    }
+
+    updateAssistantAccessState(store, {
+      assistantId: targetAssistant.id,
+      assistantName: targetAssistant.nome,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: ""
+    });
+
+    writeStore(store);
+    localStorage.removeItem(`acms-assistant-unlocked:${ASSISTANT_PORTAL_ID}`);
+    notify();
+    return {
+      assistantLink: getAssistantPortalLink(),
+      assistantPin: normalizedPin,
+      assistantAccessToken: ASSISTANT_PORTAL_ID,
+      failedAttempts: 0,
+      isBlocked: false,
+      blockedAt: "",
+      statusLabel: "Ativo",
+      shareMessage: buildAssistantShareMessage({
+        assistantName: targetAssistant.nome,
+        assistantLink: getAssistantPortalLink(),
+        assistantPin: normalizedPin
+      })
+    };
+  },
+
+  registerAssistantFailedAttempt(token) {
+    const store = readStore();
+    const assistantUser = getAssistantByToken(store, token || ASSISTANT_PORTAL_ID);
+    if (!assistantUser) {
+      throw new Error("Acesso do auxiliar nao encontrado. Solicite um novo PIN a tesouraria.");
+    }
+    if (store.assistantAccess.isBlocked) {
+      throw new Error("Acesso bloqueado. Solicite um novo PIN a tesouraria.");
+    }
+
+    const failedAttempts = Number(store.assistantAccess.failedAttempts || 0) + 1;
+    const isBlocked = failedAttempts >= ASSISTANT_MAX_PIN_ATTEMPTS;
+    updateAssistantAccessState(store, {
+      failedAttempts,
+      isBlocked,
+      blockedAt: isBlocked ? new Date().toISOString() : ""
+    });
+    writeStore(store);
+    notify();
+
+    if (isBlocked) {
+      throw new Error("Acesso bloqueado apos 4 tentativas. Solicite um novo PIN a tesouraria.");
+    }
+
+    const remainingAttempts = ASSISTANT_MAX_PIN_ATTEMPTS - failedAttempts;
+    throw new Error(`PIN invalido. Restam ${remainingAttempts} tentativa(s).`);
+  },
+
   createMember(payload) {
     const store = readStore();
     const normalizedName = String(payload.nome || "").trim();
@@ -213,6 +389,20 @@ export const localDb = {
     };
 
     store.users.push(member);
+    writeStore(store);
+    notify();
+    return member;
+  },
+
+  deleteMember(memberId) {
+    const store = readStore();
+    const member = store.users.find((item) => item.id === memberId && item.role === "member");
+    if (!member) throw new Error("Responsavel nao encontrado.");
+    const hasDependencies = store.advances.some((item) => item.usuarioId === memberId);
+    if (hasDependencies) {
+      throw new Error("Nao e possivel excluir este responsavel porque ele ja possui adiantamentos vinculados.");
+    }
+    store.users = store.users.filter((item) => item.id !== memberId);
     writeStore(store);
     notify();
     return member;
@@ -531,32 +721,42 @@ export const localDb = {
         assistantPin: assistantUser?.pin || "1234",
         assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar"
       };
-    },
-
-    getAssistantPortalAccess(assistantUser) {
-    const store = readStore();
-    const targetAssistant =
-      assistantUser || store.users.find((item) => item.role === "assistant") || store.session.assistantUser || null;
-    if (!targetAssistant) {
-      throw new Error("Cadastre um tesoureiro auxiliar para gerar o acesso.");
-    }
-    const storedAssistant = store.users.find((item) => item.id === targetAssistant.id);
-    if (storedAssistant) {
-      storedAssistant.accessToken = ASSISTANT_PORTAL_ID;
-    }
-    if (store.session.assistantUser?.id === targetAssistant.id) {
-      store.session.assistantUser.accessToken = ASSISTANT_PORTAL_ID;
-    }
-    writeStore(store);
-    notify();
-    return {
-      assistantLink: typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar",
-      assistantPin: targetAssistant.pin || "1234",
-      assistantAccessToken: ASSISTANT_PORTAL_ID
-    };
   },
 
-    markAuthorizationDelivered(id) {
+  updateAuthorization(payload, { resent = false } = {}) {
+    const store = readStore();
+    const authorization = store.authorizations.find((item) => item.id === payload.authorizationId);
+    if (!authorization) throw new Error("Repasse nao encontrado.");
+    authorization.description = payload.description || "";
+    authorization.audioUrl = payload.audioUrl || authorization.audioUrl || "";
+    authorization.audioName = payload.audioName || authorization.audioName || "";
+    authorization.status = "AUTORIZADO";
+    authorization.deliveredAt = "";
+    saveHistory(
+      store,
+      authorization.advanceId,
+      resent ? "REPASSE_REENVIADO" : "REPASSE_ATUALIZADO",
+      resent
+        ? "Repasse reenviado para o tesoureiro auxiliar."
+        : "Repasse atualizado para o tesoureiro auxiliar."
+    );
+    writeStore(store);
+    notify();
+    return authorization;
+  },
+
+  deleteAuthorization(authorizationId) {
+    const store = readStore();
+    const authorization = store.authorizations.find((item) => item.id === authorizationId);
+    if (!authorization) throw new Error("Repasse nao encontrado.");
+    store.authorizations = store.authorizations.filter((item) => item.id !== authorizationId);
+    saveHistory(store, authorization.advanceId, "REPASSE_EXCLUIDO", "Repasse removido da area do auxiliar.");
+    writeStore(store);
+    notify();
+    return authorization;
+  },
+
+  markAuthorizationDelivered(id) {
     const store = readStore();
     const authorization = store.authorizations.find((item) => item.id === id);
     if (!authorization) throw new Error("Autorização não encontrada.");

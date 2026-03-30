@@ -47,7 +47,28 @@ service cloud.firestore {
 
     match /acesso_auxiliar/{token} {
       allow read: if true;
-      allow create, update, delete: if isTreasurer();
+      allow create, delete: if isTreasurer();
+      allow update: if isTreasurer() || (
+        !signedIn() &&
+        request.resource.data.assistantId == resource.data.assistantId &&
+        request.resource.data.assistantName == resource.data.assistantName &&
+        request.resource.data.pinHash == resource.data.pinHash &&
+        request.resource.data.updatedAt == resource.data.updatedAt &&
+        request.resource.data.failedAttempts == resource.data.failedAttempts + 1 &&
+        (
+          (
+            !resource.data.isBlocked &&
+            !request.resource.data.isBlocked &&
+            request.resource.data.blockedAt == resource.data.blockedAt
+          ) ||
+          (
+            !resource.data.isBlocked &&
+            request.resource.data.isBlocked &&
+            request.resource.data.failedAttempts == 4 &&
+            request.resource.data.blockedAt is string
+          )
+        )
+      );
 
       match /ordens/{orderId} {
         allow read: if true;
