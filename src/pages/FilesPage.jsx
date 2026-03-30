@@ -221,6 +221,15 @@ export function FilesPage() {
     return () => window.clearInterval(timer);
   }, [qrSession, showQrModal]);
 
+  useEffect(() => {
+    if (!lightboxAsset) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [lightboxAsset]);
+
   const breadcrumbs = useMemo(() => {
     if (!currentFolder) return [{ id: "", label: "Meu drive" }];
     const byId = new Map(activeFolders.map((item) => [item.id, item]));
@@ -572,6 +581,7 @@ export function FilesPage() {
     setQrLoading(true);
     setQrFolder(folder);
     setShowQrModal(true);
+    setQrSession(null);
     try {
       const nextSession = await actions.createDriveUploadSession(
         {
@@ -587,10 +597,15 @@ export function FilesPage() {
         showSuccess("Novo QR temporario gerado para esta pasta.");
       }
     } catch (error) {
-      showError(error);
-      setShowQrModal(false);
-      setQrFolder(null);
-      setQrSession(null);
+      if (String(error?.message || "").includes("Missing or insufficient permissions")) {
+        showError(
+          new Error(
+            "O Firebase bloqueou a criacao do QR. Publique as regras novas do Firestore para liberar a colecao sessoes_upload_drive."
+          )
+        );
+      } else {
+        showError(error);
+      }
     } finally {
       setQrLoading(false);
     }
@@ -657,6 +672,7 @@ export function FilesPage() {
 
   function handleLightboxWheel(event) {
     event.preventDefault();
+    event.stopPropagation();
     const delta = event.deltaY < 0 ? 0.15 : -0.15;
     setLightboxZoom((current) => Math.min(4, Math.max(0.5, Number((current + delta).toFixed(2)))));
   }
@@ -1376,7 +1392,13 @@ export function FilesPage() {
                   </button>
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="files-empty-state">
+                <Icon name="qr" size={28} />
+                <strong>Nao foi possivel gerar o QR agora</strong>
+                <p>Se estiver usando Firebase, publique as regras novas do Firestore e tente novamente.</p>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
