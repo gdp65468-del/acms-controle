@@ -11,10 +11,10 @@ function getRequiredEnv(name) {
 }
 
 function normalizePrivateKey(value) {
-  return value.replace(/\\n/g, "\n");
+  return String(value || "").replace(/\\n/g, "\n");
 }
 
-function getAdminApp() {
+export function getAdminApp() {
   if (getApps().length) {
     return getApps()[0];
   }
@@ -28,7 +28,12 @@ function getAdminApp() {
   });
 }
 
-export const adminApp = getAdminApp();
-export const adminDb = getFirestore(adminApp);
-export const adminAuth = getAuth(adminApp);
+export function getAdminDb() {
+  return getFirestore(getAdminApp());
+}
+
+export function getAdminAuth() {
+  return getAuth(getAdminApp());
+}
+
 export { Timestamp };

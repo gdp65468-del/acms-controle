@@ -1,4 +1,4 @@
-import { Timestamp, adminDb } from "../_lib/firebaseAdmin.js";
+import { Timestamp, getAdminDb } from "../_lib/firebaseAdmin.js";
 import { requireTreasurer } from "../_lib/auth.js";
 import { uploadFileToCloudinary } from "../_lib/cloudinary.js";
 import { sendError, sendJson } from "../_lib/http.js";
@@ -44,6 +44,7 @@ export default async function handler(req, res) {
 
   try {
     const treasurer = await requireTreasurer(req);
+    const adminDb = getAdminDb();
     const { fields, files } = await parseMultipartForm(req);
     const file = getSingleFile(files, "file");
     if (!file) {

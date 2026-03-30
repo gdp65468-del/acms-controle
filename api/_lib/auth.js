@@ -1,4 +1,4 @@
-import { adminAuth, adminDb } from "./firebaseAdmin.js";
+import { getAdminAuth, getAdminDb } from "./firebaseAdmin.js";
 
 export async function requireTreasurer(req) {
   const header = String(req.headers.authorization || "");
@@ -7,6 +7,8 @@ export async function requireTreasurer(req) {
   }
 
   const idToken = header.slice("Bearer ".length).trim();
+  const adminAuth = getAdminAuth();
+  const adminDb = getAdminDb();
   const decoded = await adminAuth.verifyIdToken(idToken);
   const usersCollection = adminDb.collection("usuarios");
   let profile = null;

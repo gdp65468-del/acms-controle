@@ -1,4 +1,4 @@
-import { adminDb, Timestamp } from "./firebaseAdmin.js";
+import { getAdminDb, Timestamp } from "./firebaseAdmin.js";
 import { createSignedToken, sha256, verifySignedToken } from "./security.js";
 import { uploadFileToCloudinary } from "./cloudinary.js";
 
@@ -8,6 +8,7 @@ const COLLECTIONS = {
 };
 
 function sessionRef(sessionId) {
+  const adminDb = getAdminDb();
   return adminDb.collection(COLLECTIONS.driveUploadSessions).doc(String(sessionId || ""));
 }
 
@@ -181,6 +182,7 @@ export async function touchDriveUploadSessionPublic(sessionToken, expectedSessio
 }
 
 export async function listDriveUploadAssets(sessionToken, sessionId) {
+  const adminDb = getAdminDb();
   await touchDriveUploadSessionPublic(sessionToken, sessionId);
   const snapshot = await adminDb
     .collection(COLLECTIONS.fileAssets)
@@ -194,6 +196,7 @@ export async function listDriveUploadAssets(sessionToken, sessionId) {
 }
 
 export async function uploadDriveUploadAsset(sessionToken, sessionId, file, { title = "", notes = "" } = {}) {
+  const adminDb = getAdminDb();
   const { folderId, folderPath } = await verifyDriveUploadSession(sessionToken, sessionId);
   const normalizedTitle = String(title || file.originalFilename || "").trim();
   if (!normalizedTitle) {
@@ -235,6 +238,7 @@ export async function uploadDriveUploadAsset(sessionToken, sessionId, file, { ti
 }
 
 export async function renameDriveUploadAsset(sessionToken, sessionId, assetId, title) {
+  const adminDb = getAdminDb();
   await verifyDriveUploadSession(sessionToken, sessionId);
   const normalizedTitle = String(title || "").trim();
   if (!normalizedTitle) {
@@ -258,6 +262,7 @@ export async function renameDriveUploadAsset(sessionToken, sessionId, assetId, t
 }
 
 export async function deleteDriveUploadAsset(sessionToken, sessionId, assetId) {
+  const adminDb = getAdminDb();
   await verifyDriveUploadSession(sessionToken, sessionId);
   const ref = adminDb.collection(COLLECTIONS.fileAssets).doc(String(assetId || ""));
   const snapshot = await ref.get();

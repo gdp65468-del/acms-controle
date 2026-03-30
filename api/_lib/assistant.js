@@ -1,4 +1,4 @@
-import { adminDb, Timestamp } from "./firebaseAdmin.js";
+import { getAdminDb, Timestamp } from "./firebaseAdmin.js";
 import { createSignedToken, sha256, verifySignedToken } from "./security.js";
 
 const COLLECTIONS = {
@@ -12,6 +12,7 @@ const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 const ASSISTANT_SESSION_HOURS = 8;
 
 function assistantAccessRef() {
+  const adminDb = getAdminDb();
   return adminDb.collection(COLLECTIONS.assistantAccess).doc(ASSISTANT_PORTAL_ID);
 }
 
@@ -147,6 +148,7 @@ export async function verifyAssistantPortalSession(sessionToken) {
 }
 
 export async function listAssistantOrders(sessionToken) {
+  const adminDb = getAdminDb();
   const { assistantId, portal } = await verifyAssistantPortalSession(sessionToken);
   const snapshot = await adminDb
     .collection(COLLECTIONS.authorizations)
@@ -172,6 +174,7 @@ export async function listAssistantOrders(sessionToken) {
 }
 
 export async function markAssistantOrderDelivered(sessionToken, authorizationId) {
+  const adminDb = getAdminDb();
   const { assistantId } = await verifyAssistantPortalSession(sessionToken);
   const authorizationRef = adminDb.collection(COLLECTIONS.authorizations).doc(String(authorizationId || ""));
   const authorizationSnapshot = await authorizationRef.get();

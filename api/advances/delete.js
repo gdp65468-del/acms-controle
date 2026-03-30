@@ -1,4 +1,4 @@
-import { adminDb } from "../_lib/firebaseAdmin.js";
+import { getAdminDb } from "../_lib/firebaseAdmin.js";
 import { requireTreasurer } from "../_lib/auth.js";
 import { readJsonBody, requireMethod, sendError, sendJson } from "../_lib/http.js";
 
@@ -7,6 +7,7 @@ export default async function handler(req, res) {
 
   try {
     await requireTreasurer(req);
+    const adminDb = getAdminDb();
     const body = await readJsonBody(req);
     const advanceId = String(body.advanceId || "").trim();
 
