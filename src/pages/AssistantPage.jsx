@@ -100,6 +100,7 @@ export function AssistantPage() {
   const [isMobileView, setIsMobileView] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth <= 980 : false
   );
+  const [isUnlocked, setIsUnlocked] = useState(false);
 
   const assignedAuthorizations = useMemo(() => {
     if (!assistantUser) return [];
@@ -115,6 +116,10 @@ export function AssistantPage() {
     });
     return () => unsubscribe?.();
   }, [actions, accessToken]);
+
+  useEffect(() => {
+    setIsUnlocked(actions.isAssistantUnlocked(accessToken, assistantUser));
+  }, [actions, accessToken, assistantUser]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -152,6 +157,16 @@ export function AssistantPage() {
     localStorage.setItem(FONT_SCALE_KEY, String(normalized));
   }
 
+  async function handleUnlock(pin, nextAssistantUser, nextAccessToken) {
+    await actions.unlockAssistant(pin, nextAssistantUser, nextAccessToken);
+    setIsUnlocked(true);
+  }
+
+  function handleLock() {
+    actions.lockAssistant(accessToken);
+    setIsUnlocked(false);
+  }
+
   if (loadingAccess) {
     return (
       <main className="assistant-shell dark-shell">
@@ -174,8 +189,8 @@ export function AssistantPage() {
     );
   }
 
-  if (!actions.isAssistantUnlocked(accessToken, assistantUser)) {
-    return <PinGate assistantUser={assistantUser} accessToken={accessToken} onUnlock={actions.unlockAssistant} />;
+  if (!isUnlocked) {
+    return <PinGate assistantUser={assistantUser} accessToken={accessToken} onUnlock={handleUnlock} />;
   }
 
   return (
@@ -199,7 +214,7 @@ export function AssistantPage() {
                   A+
                 </button>
               </div>
-              <button className="button-ghost assistant-lock-button" onClick={() => actions.lockAssistant(accessToken)}>
+              <button className="button-ghost assistant-lock-button" onClick={handleLock}>
                 <Icon name="lock" size={16} />
               </button>
             </div>
