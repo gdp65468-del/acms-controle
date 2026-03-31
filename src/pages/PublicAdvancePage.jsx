@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAppContext } from "../context/AppContext";
-import { formatCurrency, formatDate } from "../utils/format";
+import { formatCurrency, formatDate, getOutstandingAmount } from "../utils/format";
 
 const FINAL_STATUSES = new Set(["PRESTADO", "JUSTIFICADO"]);
 
@@ -52,8 +52,16 @@ export function PublicAdvancePage() {
                     </div>
                     <div className="detail-grid">
                       <div>
-                        <span>Valor</span>
+                        <span>Valor total</span>
                         <strong>{formatCurrency(advance.valor)}</strong>
+                      </div>
+                      <div>
+                        <span>Total pago</span>
+                        <strong>{formatCurrency(advance.totalComprovado || 0)}</strong>
+                      </div>
+                      <div>
+                        <span>Valor restante</span>
+                        <strong>{formatCurrency(getOutstandingAmount(advance))}</strong>
                       </div>
                       <div>
                         <span>Data do adiantamento</span>
@@ -68,6 +76,15 @@ export function PublicAdvancePage() {
                         <strong>{advance.prazoDias} dias</strong>
                       </div>
                     </div>
+
+                    {getOutstandingAmount(advance) > 0 ? (
+                      <div className="callout-box">
+                        <strong>Falta quitar {formatCurrency(getOutstandingAmount(advance))}.</strong>
+                        <p className="helper-text">
+                          Este adiantamento ainda nao foi fechado totalmente pela tesouraria.
+                        </p>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
