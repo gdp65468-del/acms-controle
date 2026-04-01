@@ -123,7 +123,7 @@ export function PublicAdvancePage() {
                   maxLength="8"
                   value={accessCode}
                   onChange={(event) => setAccessCode(event.target.value.replace(/\D/g, ""))}
-                  placeholder="Ex.: 777"
+                  placeholder="Digite o codigo"
                 />
               </label>
 
