@@ -15,51 +15,20 @@ export function PublicAdvancePage() {
   const [needsCode, setNeedsCode] = useState(true);
 
   useEffect(() => {
-    let active = true;
+    setPublicData(null);
+    setError("");
+    setAccessCode("");
 
-    async function loadUnlockedData() {
-      if (!token) {
-        if (!active) return;
-        setPublicData(null);
-        setNeedsCode(false);
-        setLoading(false);
-        return;
-      }
-
-      if (!appService.isPublicAdvanceUnlocked(token)) {
-        if (!active) return;
-        setPublicData(null);
-        setNeedsCode(true);
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const payload = await appService.getPublicAdvanceData(token);
-        if (!active) return;
-        setPublicData(payload.publicData || null);
-        setNeedsCode(false);
-        setError("");
-      } catch (loadError) {
-        appService.lockPublicAdvance(token);
-        if (!active) return;
-        const message = loadError?.message || "Nao foi possivel abrir este link.";
-        setPublicData(null);
-        setNeedsCode(!message.toLowerCase().includes("link nao encontrado"));
-        setError(message);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
+    if (!token) {
+      setNeedsCode(false);
+      setLoading(false);
+      return;
     }
 
-    setLoading(true);
-    loadUnlockedData();
-
-    return () => {
-      active = false;
-    };
+    // Public links now require the access code on every new page open.
+    appService.lockPublicAdvance(token);
+    setNeedsCode(true);
+    setLoading(false);
   }, [token]);
 
   async function handleUnlock(event) {
