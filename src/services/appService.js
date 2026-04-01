@@ -1685,7 +1685,7 @@ export const appService = {
     }
 
     const headers = await getTreasurerAuthHeaders();
-    const payload = await apiRequest("/api/advances/public-settings", {
+    const payload = await apiRequest("/api/advances?mode=settings", {
       headers
     });
     return payload.settings;
@@ -1702,10 +1702,11 @@ export const appService = {
     }
 
     const headers = await getTreasurerAuthHeaders();
-    const payload = await apiRequest("/api/advances/public-settings", {
+    const payload = await apiRequest("/api/advances", {
       method: "POST",
       headers,
       body: {
+        action: "settings",
         accessCode: normalizedCode
       }
     });
@@ -1720,9 +1721,10 @@ export const appService = {
       return localDb.unlockPublicAdvance(normalizedToken, accessCode);
     }
 
-    const payload = await apiRequest("/api/advances/public-unlock", {
+    const payload = await apiRequest("/api/advances", {
       method: "POST",
       body: {
+        action: "unlock",
         token: normalizedToken,
         accessCode
       }
@@ -1752,7 +1754,7 @@ export const appService = {
     }
 
     try {
-      return await apiRequest(`/api/advances/public?token=${encodeURIComponent(normalizedToken)}`, {
+      return await apiRequest(`/api/advances?mode=public&token=${encodeURIComponent(normalizedToken)}`, {
         headers: {
           Authorization: `Bearer ${storedSession.token}`
         }
@@ -1856,15 +1858,14 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.deleteAdvance(advanceId);
     }
-    const response = await fetch("/api/advances/delete", {
+    await apiRequest("/api/advances", {
       method: "POST",
-      headers: {
-        ...(await getTreasurerAuthHeaders()),
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ advanceId })
+      headers: await getTreasurerAuthHeaders(),
+      body: {
+        action: "delete",
+        advanceId
+      }
     });
-    await parseApiResponse(response);
   },
 
   subscribeAssistantAccess(token, callback) {
