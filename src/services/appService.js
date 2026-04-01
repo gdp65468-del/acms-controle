@@ -37,6 +37,7 @@ const COLLECTIONS = {
 const ASSISTANT_PORTAL_ID = "principal";
 const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 const DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES = 30;
+const DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE = "777";
 
 function isFirebasePublicContext() {
   return firebaseEnabled && !auth?.currentUser;
@@ -44,6 +45,10 @@ function isFirebasePublicContext() {
 
 function getAssistantSessionStorageKey(token = ASSISTANT_PORTAL_ID) {
   return `acms-assistant-unlocked:${token}`;
+}
+
+function getPublicAdvanceSessionStorageKey(token = "") {
+  return `acms-public-advance-unlocked:${token}`;
 }
 
 function shouldUseAssistantPortalApi(token = ASSISTANT_PORTAL_ID) {
@@ -205,6 +210,10 @@ function mapDriveUploadSession(id, data) {
 
 function getAssistantPortalLink() {
   return typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
+}
+
+function normalizePublicAdvanceAccessCode(code) {
+  return String(code || "").replace(/\D/g, "").slice(0, 8);
 }
 
 function buildAssistantShareMessage({ assistantName, assistantLink, assistantPin }) {
@@ -1668,6 +1677,115 @@ export const appService = {
       ...assistantUser,
       pin: normalizedPin
     });
+  },
+
+  async getPublicAdvanceSettings() {
+    if (!firebaseEnabled) {
+      return localDb.getPublicAdvanceSettings();
+    }
+
+    const headers = await getTreasurerAuthHeaders();
+    const payload = await apiRequest("/api/advances/public-settings", {
+      headers
+    });
+    return payload.settings;
+  },
+
+  async updatePublicAdvanceSettings(accessCode) {
+    const normalizedCode = normalizePublicAdvanceAccessCode(accessCode);
+    if (normalizedCode.length < 3) {
+      throw new Error("Informe um codigo de pelo menos 3 numeros.");
+    }
+
+    if (!firebaseEnabled) {
+      return localDb.updatePublicAdvanceSettings(normalizedCode);
+    }
+
+    const headers = await getTreasurerAuthHeaders();
+    const payload = await apiRequest("/api/advances/public-settings", {
+      method: "POST",
+      headers,
+      body: {
+        accessCode: normalizedCode
+      }
+    });
+    window.dispatchEvent(new CustomEvent("acms-public-advance-updated"));
+    return payload.settings;
+  },
+
+  async unlockPublicAdvance(token, accessCode) {
+    const normalizedToken = String(token || "").trim();
+
+    if (!firebaseEnabled) {
+      return localDb.unlockPublicAdvance(normalizedToken, accessCode);
+    }
+
+    const payload = await apiRequest("/api/advances/public-unlock", {
+      method: "POST",
+      body: {
+        token: normalizedToken,
+        accessCode
+      }
+    });
+
+    localStorage.setItem(
+      getPublicAdvanceSessionStorageKey(normalizedToken),
+      JSON.stringify({
+        token: payload.sessionToken,
+        sessionVersion: payload.sessionVersion || ""
+      })
+    );
+
+    return payload;
+  },
+
+  async getPublicAdvanceData(token) {
+    const normalizedToken = String(token || "").trim();
+
+    if (!firebaseEnabled) {
+      return localDb.getPublicAdvanceData(normalizedToken);
+    }
+
+    const storedSession = readStoredJson(getPublicAdvanceSessionStorageKey(normalizedToken));
+    if (!storedSession?.token) {
+      throw new Error("Digite o codigo de acesso para abrir este link.");
+    }
+
+    try {
+      return await apiRequest(`/api/advances/public?token=${encodeURIComponent(normalizedToken)}`, {
+        headers: {
+          Authorization: `Bearer ${storedSession.token}`
+        }
+      });
+    } catch (error) {
+      localStorage.removeItem(getPublicAdvanceSessionStorageKey(normalizedToken));
+      throw error;
+    }
+  },
+
+  isPublicAdvanceUnlocked(token = "", sessionVersion = "") {
+    const normalizedToken = String(token || "").trim();
+    if (!firebaseEnabled) {
+      return localDb.isPublicAdvanceUnlocked(normalizedToken, sessionVersion);
+    }
+
+    const storedSession = readStoredJson(getPublicAdvanceSessionStorageKey(normalizedToken));
+    if (!storedSession?.token) return false;
+    if (!sessionVersion) return true;
+    if (storedSession.sessionVersion !== String(sessionVersion || "")) {
+      localStorage.removeItem(getPublicAdvanceSessionStorageKey(normalizedToken));
+      return false;
+    }
+    return true;
+  },
+
+  lockPublicAdvance(token = "") {
+    const normalizedToken = String(token || "").trim();
+    if (!firebaseEnabled) {
+      localDb.lockPublicAdvance(normalizedToken);
+      return;
+    }
+    localStorage.removeItem(getPublicAdvanceSessionStorageKey(normalizedToken));
   },
 
   async markAuthorizationDelivered(authorization, accessToken = "") {

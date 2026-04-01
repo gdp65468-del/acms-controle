@@ -26,6 +26,9 @@ export function TreasurerPage() {
   const [assistantPortalFeedback, setAssistantPortalFeedback] = useState("");
   const [assistantPinDraft, setAssistantPinDraft] = useState("");
   const [assistantSetupName, setAssistantSetupName] = useState("");
+  const [publicAdvanceSettings, setPublicAdvanceSettings] = useState(null);
+  const [publicAdvanceCodeDraft, setPublicAdvanceCodeDraft] = useState("777");
+  const [publicAdvanceFeedback, setPublicAdvanceFeedback] = useState("");
   const [selectedAuxAuthorizationId, setSelectedAuxAuthorizationId] = useState("");
   const [auxChatDescription, setAuxChatDescription] = useState("");
   const [auxChatAudioFile, setAuxChatAudioFile] = useState(null);
@@ -54,6 +57,17 @@ export function TreasurerPage() {
       })
       .catch(() => {});
   }, [actions, assistantUser]);
+
+  useEffect(() => {
+    if (!session.currentUser?.id) return;
+    actions
+      .getPublicAdvanceSettings()
+      .then((data) => {
+        setPublicAdvanceSettings(data);
+        setPublicAdvanceCodeDraft(data.accessCode || "777");
+      })
+      .catch(() => {});
+  }, [actions, session.currentUser?.id]);
 
   useEffect(() => {
     setAssistantSetupName(assistantUser?.nome || "");
@@ -248,6 +262,22 @@ export function TreasurerPage() {
     }
   }
 
+  async function handleSavePublicAdvanceAccessCode() {
+    try {
+      setPublicAdvanceFeedback("");
+      const data = await actions.updatePublicAdvanceSettings(publicAdvanceCodeDraft);
+      setPublicAdvanceSettings(data);
+      setPublicAdvanceCodeDraft(data.accessCode || "777");
+      setPublicAdvanceFeedback("Codigo do link publico salvo com sucesso.");
+      setToastType("success");
+      setToastMessage("Codigo do link publico salvo com sucesso.");
+    } catch (error) {
+      setPublicAdvanceFeedback(error.message);
+      setToastType("error");
+      setToastMessage(error.message);
+    }
+  }
+
   async function handleDeleteAdvance() {
     if (!selectedAdvance) return;
     const confirmed = window.confirm(`Excluir o adiantamento de ${selectedAdvance.usuarioNome}?`);
@@ -304,6 +334,7 @@ export function TreasurerPage() {
   const selectedHistory = history.filter((item) => item.advanceId === selectedAdvance?.id).slice(0, 8);
   const selectedAuthorization = authorizations.find((item) => item.advanceId === selectedAdvance?.id);
   const selectedOutstandingAmount = selectedAdvance ? getOutstandingAmount(selectedAdvance) : 0;
+  const publicAdvanceAccessCode = publicAdvanceSettings?.accessCode || publicAdvanceCodeDraft || "777";
   const assistantAuthorizations = useMemo(
     () => authorizations.filter((item) => item.assistantId === assistantUser?.id),
     [assistantUser?.id, authorizations]
@@ -662,6 +693,64 @@ export function TreasurerPage() {
                   <strong>Mensagem pronta para envio</strong>
                   <pre>{assistantPortalData?.shareMessage || "Cadastre o auxiliar para gerar a mensagem pronta de acesso."}</pre>
                 </div>
+
+                <div className="callout-box full-span assistant-share-box">
+                  <strong>Codigo do link publico de adiantamento</strong>
+                  <p className="helper-text">
+                    Quem abrir o link publico precisa informar este codigo. O padrao inicial e 777, mas voce pode trocar quando quiser.
+                  </p>
+                </div>
+
+                <div className="detail-grid compact-grid assistant-access-grid full-span">
+                  <div>
+                    <span>Codigo atual</span>
+                    <strong>{publicAdvanceAccessCode}</strong>
+                  </div>
+                  <div>
+                    <span>Ultima atualizacao</span>
+                    <strong>{publicAdvanceSettings?.updatedAt ? formatDate(publicAdvanceSettings.updatedAt) : "-"}</strong>
+                  </div>
+                </div>
+
+                <label className="full-span">
+                  Codigo do link publico
+                  <input
+                    inputMode="numeric"
+                    maxLength="8"
+                    value={publicAdvanceCodeDraft}
+                    onChange={(event) => setPublicAdvanceCodeDraft(event.target.value.replace(/\D/g, ""))}
+                    placeholder="Digite pelo menos 3 numeros"
+                  />
+                </label>
+
+                <div className="actions-row">
+                  <button className="button-primary" type="button" onClick={handleSavePublicAdvanceAccessCode}>
+                    Salvar codigo do link
+                  </button>
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() => handleCopyAssistantPortal(publicAdvanceAccessCode, "Codigo")}
+                  >
+                    Copiar codigo
+                  </button>
+                  {publicPersonToken ? (
+                    <button
+                      className="button-ghost"
+                      type="button"
+                      onClick={() =>
+                        handleCopyAssistantPortal(
+                          `Consulta publica de adiantamentos\n\nLink: ${window.location.origin}/publico/${publicPersonToken}\nCodigo: ${publicAdvanceAccessCode}`,
+                          "Mensagem"
+                        )
+                      }
+                    >
+                      Copiar mensagem do link
+                    </button>
+                  ) : null}
+                </div>
+
+                {publicAdvanceFeedback ? <p className="helper-text full-span">{publicAdvanceFeedback}</p> : null}
               </section>
             ) : null}
 
@@ -994,6 +1083,10 @@ export function TreasurerPage() {
                       <a href={`/publico/${publicPersonToken}`} target="_blank" rel="noreferrer">
                         /publico/{publicPersonToken}
                       </a>
+                    </div>
+                    <div>
+                      <span>Codigo do link</span>
+                      <strong>{publicAdvanceAccessCode}</strong>
                     </div>
                   </div>
                 ) : null}

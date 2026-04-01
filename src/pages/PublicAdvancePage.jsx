@@ -1,39 +1,147 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
-import { useAppContext } from "../context/AppContext";
+import { appService } from "../services/appService";
 import { formatCurrency, formatDate, getOutstandingAmount } from "../utils/format";
 
-const FINAL_STATUSES = new Set(["PRESTADO", "JUSTIFICADO"]);
-
 export function PublicAdvancePage() {
-  const { token } = useParams();
-  const { advances, users } = useAppContext();
+  const { token = "" } = useParams();
+  const [publicData, setPublicData] = useState(null);
+  const [accessCode, setAccessCode] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
+  const [error, setError] = useState("");
+  const [needsCode, setNeedsCode] = useState(true);
 
-  const publicData = useMemo(() => {
-    const member = users.find((item) => item.role === "member" && item.publicToken === token);
-    const referenceAdvance = advances.find((item) => item.publicToken === token);
-    const memberId = member?.id || referenceAdvance?.usuarioId || "";
+  useEffect(() => {
+    let active = true;
 
-    if (!memberId) {
-      return null;
+    async function loadUnlockedData() {
+      if (!token) {
+        if (!active) return;
+        setPublicData(null);
+        setNeedsCode(false);
+        setLoading(false);
+        return;
+      }
+
+      if (!appService.isPublicAdvanceUnlocked(token)) {
+        if (!active) return;
+        setPublicData(null);
+        setNeedsCode(true);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const payload = await appService.getPublicAdvanceData(token);
+        if (!active) return;
+        setPublicData(payload.publicData || null);
+        setNeedsCode(false);
+        setError("");
+      } catch (loadError) {
+        appService.lockPublicAdvance(token);
+        if (!active) return;
+        const message = loadError?.message || "Nao foi possivel abrir este link.";
+        setPublicData(null);
+        setNeedsCode(!message.toLowerCase().includes("link nao encontrado"));
+        setError(message);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
     }
 
-    const memberAdvances = advances
-      .filter((item) => item.usuarioId === memberId && !FINAL_STATUSES.has(item.status))
-      .sort((left, right) => new Date(right.dataAdiantamento).getTime() - new Date(left.dataAdiantamento).getTime());
+    setLoading(true);
+    loadUnlockedData();
 
-    return {
-      memberName: member?.nome || referenceAdvance?.usuarioNome || "Responsavel",
-      advances: memberAdvances
+    return () => {
+      active = false;
     };
-  }, [advances, token, users]);
+  }, [token]);
+
+  async function handleUnlock(event) {
+    event.preventDefault();
+    if (!token) return;
+
+    try {
+      setUnlocking(true);
+      setError("");
+      const payload = await appService.unlockPublicAdvance(token, accessCode);
+      setPublicData(payload.publicData || null);
+      setNeedsCode(false);
+      setAccessCode("");
+    } catch (unlockError) {
+      const message = unlockError?.message || "Nao foi possivel validar o codigo.";
+      setPublicData(null);
+      setNeedsCode(!message.toLowerCase().includes("link nao encontrado"));
+      setError(message);
+    } finally {
+      setUnlocking(false);
+      setLoading(false);
+    }
+  }
+
+  function handleLock() {
+    appService.lockPublicAdvance(token);
+    setPublicData(null);
+    setNeedsCode(true);
+    setError("");
+  }
+
+  const showNotFound = !loading && !needsCode && !publicData;
 
   return (
     <main className="landing-shell dark-shell">
       <section className="hero-card public-card consult-panel">
-        {publicData ? (
+        {loading ? (
+          <>
+            <h1>Carregando link publico</h1>
+            <p>Estamos validando este acesso para mostrar os adiantamentos em aberto.</p>
+          </>
+        ) : showNotFound ? (
+          <>
+            <h1>Link nao encontrado</h1>
+            <p>Verifique o endereco informado pela tesouraria.</p>
+          </>
+        ) : needsCode ? (
+          <>
+            <div className="landing-topline">
+              <span className="eyebrow">Consulta publica</span>
+              <span className="landing-badge">Codigo necessario</span>
+            </div>
+            <h1>Acesso aos adiantamentos</h1>
+            <p>Digite o codigo informado pela tesouraria para abrir este link publico.</p>
+
+            <form className="pin-form" onSubmit={handleUnlock}>
+              <label>
+                Codigo de acesso
+                <input
+                  inputMode="numeric"
+                  maxLength="8"
+                  value={accessCode}
+                  onChange={(event) => setAccessCode(event.target.value.replace(/\D/g, ""))}
+                  placeholder="Ex.: 777"
+                />
+              </label>
+
+              <div className="actions-row">
+                <button className="button-primary" type="submit" disabled={unlocking}>
+                  {unlocking ? "Validando..." : "Abrir link"}
+                </button>
+              </div>
+            </form>
+
+            {error ? <p className="helper-text">{error}</p> : null}
+
+            <div className="consult-footer">
+              <Icon name="user" size={18} />
+              <p className="helper-text">Se voce nao recebeu o codigo, solicite o acesso para a tesouraria.</p>
+            </div>
+          </>
+        ) : (
           <>
             <div className="landing-topline">
               <span className="eyebrow">Consulta publica</span>
@@ -95,15 +203,16 @@ export function PublicAdvancePage() {
               </div>
             )}
 
+            <div className="actions-row">
+              <button className="button-ghost" type="button" onClick={handleLock}>
+                Trocar codigo
+              </button>
+            </div>
+
             <div className="consult-footer">
               <Icon name="user" size={18} />
               <p className="helper-text">Para qualquer ajuste ou confirmacao, procure a tesouraria da igreja.</p>
             </div>
-          </>
-        ) : (
-          <>
-            <h1>Link nao encontrado</h1>
-            <p>Verifique o endereco informado pela tesouraria.</p>
           </>
         )}
       </section>

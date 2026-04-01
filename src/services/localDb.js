@@ -14,6 +14,8 @@ const STORAGE_KEY = "acms-local-db";
 const ASSISTANT_PORTAL_ID = "principal";
 const ASSISTANT_MAX_PIN_ATTEMPTS = 4;
 const DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES = 30;
+const DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE = "777";
+const FINAL_ADVANCE_STATUSES = new Set(["PRESTADO", "JUSTIFICADO"]);
 
 function clone(data) {
   return JSON.parse(JSON.stringify(data));
@@ -34,6 +36,10 @@ function createSeed() {
       failedAttempts: 0,
       isBlocked: false,
       blockedAt: "",
+      updatedAt: new Date().toISOString()
+    },
+    publicAdvanceSettings: {
+      accessCode: DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE,
       updatedAt: new Date().toISOString()
     },
     session: {
@@ -64,6 +70,10 @@ function readStore() {
     failedAttempts: 0,
     isBlocked: false,
     blockedAt: "",
+    updatedAt: new Date().toISOString()
+  };
+  parsed.publicAdvanceSettings ||= {
+    accessCode: DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE,
     updatedAt: new Date().toISOString()
   };
   parsed.fileFolders = parsed.fileFolders.map((item) => ({
@@ -163,6 +173,45 @@ function getAssistantByToken(store, token) {
 
 function getAssistantPortalLink() {
   return typeof window !== "undefined" ? `${window.location.origin}/auxiliar` : "/auxiliar";
+}
+
+function getPublicAdvanceSessionStorageKey(token) {
+  return `acms-public-advance-unlocked:${token}`;
+}
+
+function getPublicAdvanceSettingsSnapshot(store) {
+  return {
+    accessCode: String(store.publicAdvanceSettings?.accessCode || DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE),
+    updatedAt: store.publicAdvanceSettings?.updatedAt || "",
+    statusLabel: "Ativo",
+    sessionVersion: [
+      String(store.publicAdvanceSettings?.accessCode || DEFAULT_PUBLIC_ADVANCE_ACCESS_CODE),
+      String(store.publicAdvanceSettings?.updatedAt || "")
+    ].join(":")
+  };
+}
+
+function getPublicAdvanceDataByToken(store, token) {
+  const normalizedToken = String(token || "").trim();
+  const member = store.users.find((item) => item.role === "member" && item.publicToken === normalizedToken);
+  const referenceAdvance = store.advances.find((item) => item.publicToken === normalizedToken);
+  const memberId = member?.id || referenceAdvance?.usuarioId || "";
+
+  if (!memberId) {
+    throw new Error("Link nao encontrado.");
+  }
+
+  const advances = store.advances
+    .filter((item) => item.usuarioId === memberId)
+    .map((item) => ({ ...item, status: computeAdvanceStatus(item) }))
+    .filter((item) => !FINAL_ADVANCE_STATUSES.has(item.status))
+    .sort((left, right) => new Date(right.dataAdiantamento || 0).getTime() - new Date(left.dataAdiantamento || 0).getTime());
+
+  return {
+    token: normalizedToken,
+    memberName: member?.nome || referenceAdvance?.usuarioNome || "Responsavel",
+    advances
+  };
 }
 
 function addMinutes(dateLike, minutes = DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES) {
@@ -313,6 +362,101 @@ export const localDb = {
 
   getAssistantUser() {
     return readStore().session.assistantUser;
+  },
+
+  getPublicAdvanceSettings() {
+    const store = readStore();
+    return getPublicAdvanceSettingsSnapshot(store);
+  },
+
+  updatePublicAdvanceSettings(nextCode) {
+    const store = readStore();
+    const normalizedCode = String(nextCode || "").replace(/\D/g, "").slice(0, 8);
+    if (normalizedCode.length < 3) {
+      throw new Error("Informe um codigo de pelo menos 3 numeros.");
+    }
+
+    store.publicAdvanceSettings = {
+      accessCode: normalizedCode,
+      updatedAt: new Date().toISOString()
+    };
+
+    writeStore(store);
+    notify();
+    return getPublicAdvanceSettingsSnapshot(store);
+  },
+
+  unlockPublicAdvance(token, accessCode) {
+    const store = readStore();
+    const settings = getPublicAdvanceSettingsSnapshot(store);
+    const normalizedCode = String(accessCode || "").replace(/\D/g, "").slice(0, 8);
+
+    if (!normalizedCode) {
+      throw new Error("Digite o codigo de acesso informado pela tesouraria.");
+    }
+
+    if (normalizedCode !== settings.accessCode) {
+      throw new Error("Codigo invalido.");
+    }
+
+    const publicData = getPublicAdvanceDataByToken(store, token);
+    localStorage.setItem(
+      getPublicAdvanceSessionStorageKey(token),
+      JSON.stringify({
+        token: "local",
+        sessionVersion: settings.sessionVersion
+      })
+    );
+
+    return {
+      sessionToken: "local",
+      sessionVersion: settings.sessionVersion,
+      publicData
+    };
+  },
+
+  getPublicAdvanceData(token) {
+    const store = readStore();
+    const settings = getPublicAdvanceSettingsSnapshot(store);
+    const storedSession = localStorage.getItem(getPublicAdvanceSessionStorageKey(token));
+
+    if (!storedSession) {
+      throw new Error("Digite o codigo de acesso para abrir este link.");
+    }
+
+    try {
+      const parsed = JSON.parse(storedSession);
+      if (parsed.sessionVersion !== settings.sessionVersion) {
+        localStorage.removeItem(getPublicAdvanceSessionStorageKey(token));
+        throw new Error("Codigo atualizado. Digite o novo codigo para continuar.");
+      }
+    } catch (error) {
+      localStorage.removeItem(getPublicAdvanceSessionStorageKey(token));
+      throw error instanceof Error ? error : new Error("Sessao invalida.");
+    }
+
+    return {
+      sessionVersion: settings.sessionVersion,
+      publicData: getPublicAdvanceDataByToken(store, token)
+    };
+  },
+
+  isPublicAdvanceUnlocked(token, sessionVersion = "") {
+    const storedSession = localStorage.getItem(getPublicAdvanceSessionStorageKey(token));
+    if (!storedSession) return false;
+
+    try {
+      const parsed = JSON.parse(storedSession);
+      if (!sessionVersion) return Boolean(parsed.token);
+      return String(parsed.sessionVersion || "") === String(sessionVersion || "");
+    } catch {
+      localStorage.removeItem(getPublicAdvanceSessionStorageKey(token));
+      return false;
+    }
+  },
+
+  lockPublicAdvance(token) {
+    localStorage.removeItem(getPublicAdvanceSessionStorageKey(token));
   },
 
   getAssistantPortalAccess(assistantUser) {
