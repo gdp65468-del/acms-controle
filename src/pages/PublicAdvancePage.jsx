@@ -125,7 +125,7 @@ export function PublicAdvancePage() {
                 Adiantamento e um valor entregue antes para pagar uma necessidade do departamento ou da igreja.
               </p>
               <p className="helper-text">
-                Depois, esse gasto precisa ser comprovado com nota fiscal ou recibo. Isso ajuda a manter a administracao
+                Depois, esse gasto precisa ser comprovado com nota fiscal. Isso ajuda a manter a administracao
                 organizada e mostra com clareza como o dinheiro da igreja foi usado.
               </p>
             </div>
@@ -136,7 +136,7 @@ export function PublicAdvancePage() {
                 Valor total: e o valor que foi entregue para gastar.
               </p>
               <p className="helper-text">
-                Total comprovado: e a parte que ja foi apresentada com nota fiscal ou recibo.
+                Total comprovado: e a parte que ja foi apresentada com nota fiscal.
               </p>
               <p className="helper-text">
                 Valor restante: e o que ainda falta comprovar para fechar esse relatorio.
@@ -182,7 +182,7 @@ export function PublicAdvancePage() {
                       <div className="callout-box">
                         <strong>Ainda falta comprovar {formatCurrency(getOutstandingAmount(advance))}.</strong>
                         <p className="helper-text">
-                          Isso quer dizer que a tesouraria ainda aguarda nota fiscal, recibo ou comprovacao desse valor.
+                          Isso quer dizer que a tesouraria ainda aguarda a nota fiscal desse valor.
                         </p>
                       </div>
                     ) : null}
