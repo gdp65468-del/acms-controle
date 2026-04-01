@@ -117,7 +117,31 @@ export function PublicAdvancePage() {
               <span className="landing-badge">Adiantamentos em aberto</span>
             </div>
             <h1>{publicData.memberName}</h1>
-            <p>Este link mostra todos os adiantamentos que ainda nao foram finalizados para esta pessoa.</p>
+            <p>Esta pagina mostra, de forma simples, os adiantamentos que ainda estao em aberto para esta pessoa.</p>
+
+            <div className="callout-box">
+              <strong>O que e um adiantamento?</strong>
+              <p className="helper-text">
+                Adiantamento e um valor entregue antes para pagar uma necessidade do departamento ou da igreja.
+              </p>
+              <p className="helper-text">
+                Depois, esse gasto precisa ser comprovado com nota fiscal ou recibo. Isso ajuda a manter a administracao
+                organizada e mostra com clareza como o dinheiro da igreja foi usado.
+              </p>
+            </div>
+
+            <div className="callout-box">
+              <strong>Como ler estas informacoes</strong>
+              <p className="helper-text">
+                Valor total: e o valor que foi entregue para gastar.
+              </p>
+              <p className="helper-text">
+                Total comprovado: e a parte que ja foi apresentada com nota fiscal ou recibo.
+              </p>
+              <p className="helper-text">
+                Valor restante: e o que ainda falta comprovar para fechar esse relatorio.
+              </p>
+            </div>
 
             {publicData.advances.length ? (
               <div className="public-advance-list">
@@ -133,7 +157,7 @@ export function PublicAdvancePage() {
                         <strong>{formatCurrency(advance.valor)}</strong>
                       </div>
                       <div>
-                        <span>Total pago</span>
+                        <span>Total comprovado</span>
                         <strong>{formatCurrency(advance.totalComprovado || 0)}</strong>
                       </div>
                       <div>
@@ -156,9 +180,9 @@ export function PublicAdvancePage() {
 
                     {getOutstandingAmount(advance) > 0 ? (
                       <div className="callout-box">
-                        <strong>Falta quitar {formatCurrency(getOutstandingAmount(advance))}.</strong>
+                        <strong>Ainda falta comprovar {formatCurrency(getOutstandingAmount(advance))}.</strong>
                         <p className="helper-text">
-                          Este adiantamento ainda nao foi fechado totalmente pela tesouraria.
+                          Isso quer dizer que a tesouraria ainda aguarda nota fiscal, recibo ou comprovacao desse valor.
                         </p>
                       </div>
                     ) : null}
@@ -168,7 +192,9 @@ export function PublicAdvancePage() {
             ) : (
               <div className="callout-box">
                 <strong>Nenhum adiantamento em aberto.</strong>
-                <p className="helper-text">Todos os registros desta pessoa ja foram finalizados pela tesouraria.</p>
+                <p className="helper-text">
+                  Todos os registros desta pessoa ja foram fechados e organizados pela tesouraria.
+                </p>
               </div>
             )}
 
@@ -180,7 +206,9 @@ export function PublicAdvancePage() {
 
             <div className="consult-footer">
               <Icon name="user" size={18} />
-              <p className="helper-text">Para qualquer ajuste ou confirmacao, procure a tesouraria da igreja.</p>
+              <p className="helper-text">
+                Se precisar corrigir alguma informacao ou confirmar algum gasto, procure a tesouraria da igreja.
+              </p>
             </div>
           </>
         )}
