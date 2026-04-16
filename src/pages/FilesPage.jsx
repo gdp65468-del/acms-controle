@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import QRCode from "qrcode";
 import { Icon } from "../components/Icon";
+import { UploadProgressOverlay } from "../components/UploadProgressOverlay";
 import { useAppContext } from "../context/AppContext";
 import { formatDate } from "../utils/format";
 
@@ -105,6 +106,7 @@ export function FilesPage() {
   const [feedback, setFeedback] = useState("");
   const [feedbackType, setFeedbackType] = useState("success");
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ active: false, total: 0, completed: 0, currentName: "" });
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const lightboxDragRef = useRef(null);
@@ -424,8 +426,20 @@ export function FilesPage() {
       return;
     }
     setUploading(true);
+    setUploadProgress({
+      active: true,
+      total: selectedFiles.length,
+      completed: 0,
+      currentName: selectedFiles[0]?.name || ""
+    });
     try {
-      for (const file of selectedFiles) {
+      for (const [index, file] of selectedFiles.entries()) {
+        setUploadProgress({
+          active: true,
+          total: selectedFiles.length,
+          completed: index,
+          currentName: file.name || getDefaultTitle(file)
+        });
         await actions.uploadFileAsset({
           file,
           folderId: currentFolderId,
@@ -433,6 +447,12 @@ export function FilesPage() {
           title: selectedFiles.length === 1 ? uploadForm.title || getDefaultTitle(file) : getDefaultTitle(file),
           notes: uploadForm.notes,
           uploadedBy: currentUserId
+        });
+        setUploadProgress({
+          active: true,
+          total: selectedFiles.length,
+          completed: index + 1,
+          currentName: file.name || getDefaultTitle(file)
         });
       }
       setSelectedFiles([]);
@@ -443,6 +463,7 @@ export function FilesPage() {
       showError(error);
     } finally {
       setUploading(false);
+      setUploadProgress({ active: false, total: 0, completed: 0, currentName: "" });
     }
   }
 
@@ -841,6 +862,8 @@ export function FilesPage() {
 
   return (
     <div className="files-drive-shell">
+      <UploadProgressOverlay progress={uploadProgress} />
+
       {feedback ? (
         <div className={`files-toast ${feedbackType === "error" ? "is-error" : "is-success"}`}>
           <div>
@@ -1440,7 +1463,7 @@ export function FilesPage() {
       ) : null}
 
       {showUploadModal ? (
-        <div className="files-modal-backdrop" onClick={() => setShowUploadModal(false)}>
+        <div className="files-modal-backdrop" onClick={() => !uploading && setShowUploadModal(false)}>
           <div className="files-modal-card files-upload-modal" onClick={(event) => event.stopPropagation()}>
             <div className="files-section-title">
               <h3>Criar ou carregar</h3>
@@ -1512,7 +1535,7 @@ export function FilesPage() {
                 <button type="submit" className="button-primary" disabled={uploading}>
                   {uploading ? "Enviando..." : "Enviar arquivos"}
                 </button>
-                <button type="button" className="button-ghost" onClick={() => setShowUploadModal(false)}>
+                <button type="button" className="button-ghost" onClick={() => setShowUploadModal(false)} disabled={uploading}>
                   Cancelar
                 </button>
               </div>

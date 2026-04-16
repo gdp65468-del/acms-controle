@@ -119,6 +119,26 @@ function mapAdvance(id, data) {
   };
 }
 
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function normalizeSettlementEntries(entries = []) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => ({
+      id: String(entry.id || crypto.randomUUID()),
+      valor: roundMoney(entry.valor),
+      descricao: String(entry.descricao || "").trim(),
+      createdAt: entry.createdAt || new Date().toISOString()
+    }))
+    .filter((entry) => entry.valor > 0);
+}
+
+function sumSettlementEntries(entries = []) {
+  return roundMoney(entries.reduce((total, entry) => total + Number(entry.valor || 0), 0));
+}
+
 function getAssistantPin(assistantUser) {
   return String(assistantUser?.pin || "");
 }
@@ -784,6 +804,7 @@ export const appService = {
       descricao: payload.descricao,
       justificativa: "",
       totalComprovado: 0,
+      prestacoes: [],
       lancadoAcms: false,
       dataLancamentoAcms: "",
       comprovantes: [],
@@ -1467,8 +1488,18 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.saveSettlement(advance.id, payload);
     }
+    const prestacoes = normalizeSettlementEntries(payload.prestacoes);
+    const totalComprovado = prestacoes.length ? sumSettlementEntries(prestacoes) : roundMoney(payload.totalComprovado);
+    const valorAdiantado = roundMoney(advance.valor);
+    if (totalComprovado < 0) {
+      throw new Error("O valor comprovado nao pode ser negativo.");
+    }
+    if (valorAdiantado > 0 && totalComprovado > valorAdiantado) {
+      throw new Error("O valor comprovado nao pode ser maior que o valor adiantado.");
+    }
     const nextRecord = {
-      totalComprovado: Number(payload.totalComprovado || 0),
+      totalComprovado,
+      prestacoes,
       justificativa: payload.justificativa || "",
       lancadoAcms: Boolean(payload.lancadoAcms),
       dataLancamentoAcms: payload.lancadoAcms ? new Date().toISOString() : ""

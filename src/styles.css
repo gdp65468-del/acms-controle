@@ -212,6 +212,55 @@ a {
   padding: 0;
 }
 
+.upload-progress-overlay {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 80;
+  width: min(520px, calc(100vw - 28px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.upload-progress-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  color: var(--text);
+}
+
+.upload-progress-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.upload-progress-bar {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef7;
+}
+
+.upload-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f80ed, #27ae60);
+  transition: width 0.2s ease;
+}
+
+.upload-progress-card p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .files-drive-brand {
   display: flex;
   align-items: center;
@@ -567,11 +616,14 @@ a {
   display: grid;
   gap: 4px;
   color: var(--text);
+  max-height: 132px;
+  overflow: auto;
 }
 
 .files-selected-file-list li {
   overflow-wrap: anywhere;
   word-break: break-word;
+  line-height: 1.35;
 }
 
 .files-drive-grid {
@@ -1363,7 +1415,7 @@ a {
   display: grid;
   gap: 6px;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 8px;
   background: rgba(59, 130, 246, 0.12);
   border: 1px solid rgba(96, 165, 250, 0.18);
 }
@@ -1375,16 +1427,19 @@ a {
 
 .drive-upload-asset-list {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .drive-upload-asset-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 14px;
-  border-radius: 18px;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
   background: rgba(148, 163, 184, 0.08);
   border: 1px solid rgba(148, 163, 184, 0.14);
 }
@@ -1392,14 +1447,14 @@ a {
 .drive-upload-asset-copy {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
 }
 
 .drive-upload-asset-copy > div:last-child {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .drive-upload-asset-copy strong,
@@ -1407,6 +1462,19 @@ a {
 .drive-upload-asset-copy span {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.drive-upload-asset-copy p,
+.drive-upload-asset-copy span {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.drive-upload-asset-copy p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
 }
 
 .drive-upload-asset-actions {
@@ -1929,6 +1997,64 @@ a {
   height: 22px;
   margin: 0;
   padding: 0;
+}
+
+.settlement-entry-editor {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid rgba(182, 199, 221, 0.84);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fbff, #f2f7fd);
+}
+
+.settlement-entry-fields {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.settlement-entry-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.settlement-entry-fields .button-primary {
+  min-height: 46px;
+  border-radius: 8px;
+}
+
+.settlement-entry-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settlement-entry-total,
+.settlement-entry-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(182, 199, 221, 0.84);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff, #f6f9fd);
+}
+
+.settlement-entry-total span,
+.settlement-entry-item span {
+  color: var(--muted);
+}
+
+.settlement-entry-item > div {
+  display: grid;
+  gap: 2px;
+}
+
+.settlement-entry-item .button-danger {
+  border-radius: 8px;
+  padding: 9px 11px;
 }
 
 .full-span {
@@ -3207,6 +3333,19 @@ textarea {
 
   .inline-create-row {
     grid-template-columns: 1fr;
+  }
+
+  .settlement-entry-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .settlement-entry-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settlement-entry-item .button-danger {
+    width: 100%;
   }
 
   .row-main {

@@ -109,6 +109,26 @@ function generateId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function normalizeSettlementEntries(entries = []) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => ({
+      id: String(entry.id || generateId("prestacao")),
+      valor: roundMoney(entry.valor),
+      descricao: String(entry.descricao || "").trim(),
+      createdAt: entry.createdAt || new Date().toISOString()
+    }))
+    .filter((entry) => entry.valor > 0);
+}
+
+function sumSettlementEntries(entries = []) {
+  return roundMoney(entries.reduce((total, entry) => total + Number(entry.valor || 0), 0));
+}
+
 function ensurePublicToken(store, userId, fallbackToken = "") {
   const user = store.users.find((item) => item.id === userId);
   if (user?.publicToken) {
@@ -1093,6 +1113,7 @@ export const localDb = {
       descricao: payload.descricao,
       justificativa: "",
       totalComprovado: 0,
+      prestacoes: [],
       lancadoAcms: false,
       dataLancamentoAcms: "",
       comprovantes: [],
@@ -1111,7 +1132,18 @@ export const localDb = {
     const advance = store.advances.find((item) => item.id === advanceId);
     if (!advance) throw new Error("Adiantamento não encontrado.");
 
-    advance.totalComprovado = Number(payload.totalComprovado || 0);
+    const prestacoes = normalizeSettlementEntries(payload.prestacoes);
+    const totalComprovado = prestacoes.length ? sumSettlementEntries(prestacoes) : roundMoney(payload.totalComprovado);
+    const valorAdiantado = roundMoney(advance.valor);
+    if (totalComprovado < 0) {
+      throw new Error("O valor comprovado nao pode ser negativo.");
+    }
+    if (valorAdiantado > 0 && totalComprovado > valorAdiantado) {
+      throw new Error("O valor comprovado nao pode ser maior que o valor adiantado.");
+    }
+
+    advance.totalComprovado = totalComprovado;
+    advance.prestacoes = prestacoes;
     advance.justificativa = payload.justificativa || "";
     advance.lancadoAcms = Boolean(payload.lancadoAcms);
     advance.dataLancamentoAcms = payload.lancadoAcms ? new Date().toISOString() : "";

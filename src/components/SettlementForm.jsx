@@ -1,33 +1,116 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatCurrency, getOutstandingAmount } from "../utils/format";
 
+function createEntryId() {
+  return globalThis.crypto?.randomUUID?.() || `prestacao-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseMoneyInput(value) {
+  const rawValue = String(value || "").trim().replace(/\s/g, "");
+  if (!rawValue) return 0;
+  const normalized =
+    rawValue.includes(",") && rawValue.includes(".")
+      ? rawValue.replace(/\./g, "").replace(",", ".")
+      : rawValue.replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function normalizeEntries(advance) {
+  const entries = Array.isArray(advance.prestacoes) ? advance.prestacoes : [];
+  if (entries.length) {
+    return entries
+      .map((entry) => ({
+        id: String(entry.id || createEntryId()),
+        valor: roundMoney(entry.valor),
+        descricao: String(entry.descricao || "").trim(),
+        createdAt: entry.createdAt || ""
+      }))
+      .filter((entry) => entry.valor > 0);
+  }
+
+  const legacyTotal = roundMoney(advance.totalComprovado);
+  if (legacyTotal <= 0) return [];
+  return [
+    {
+      id: "valor-anterior",
+      valor: legacyTotal,
+      descricao: "Valor ja registrado",
+      createdAt: advance.dataPrestacao || ""
+    }
+  ];
+}
+
+function sumEntries(entries) {
+  return roundMoney(entries.reduce((total, entry) => total + Number(entry.valor || 0), 0));
+}
+
 export function SettlementForm({ advance, onSave }) {
-  const [totalComprovado, setTotalComprovado] = useState(advance.totalComprovado || "");
+  const [entries, setEntries] = useState(() => normalizeEntries(advance));
+  const [entryValue, setEntryValue] = useState("");
+  const [entryDescription, setEntryDescription] = useState("");
   const [justificativa, setJustificativa] = useState(advance.justificativa || "");
   const [lancadoAcms, setLancadoAcms] = useState(Boolean(advance.lancadoAcms));
   const [error, setError] = useState("");
+  const totalComprovado = useMemo(() => sumEntries(entries), [entries]);
   const outstandingAmount = useMemo(
     () => getOutstandingAmount({ ...advance, totalComprovado }),
     [advance, totalComprovado]
   );
 
   useEffect(() => {
-    setTotalComprovado(advance.totalComprovado || "");
+    setEntries(normalizeEntries(advance));
+    setEntryValue("");
+    setEntryDescription("");
     setJustificativa(advance.justificativa || "");
     setLancadoAcms(Boolean(advance.lancadoAcms));
     setError("");
   }, [advance]);
 
+  function handleAddEntry() {
+    const amount = roundMoney(parseMoneyInput(entryValue));
+    const nextTotal = roundMoney(totalComprovado + amount);
+    const advanceAmount = roundMoney(advance.valor);
+
+    setError("");
+    if (amount <= 0) {
+      setError("Informe um valor de nota maior que zero.");
+      return;
+    }
+    if (advanceAmount > 0 && nextTotal > advanceAmount) {
+      setError("O valor das notas nao pode passar do valor adiantado.");
+      return;
+    }
+
+    setEntries((current) => [
+      ...current,
+      {
+        id: createEntryId(),
+        valor: amount,
+        descricao: entryDescription.trim(),
+        createdAt: new Date().toISOString()
+      }
+    ]);
+    setEntryValue("");
+    setEntryDescription("");
+  }
+
+  function handleRemoveEntry(entryId) {
+    setError("");
+    setEntries((current) => current.filter((entry) => entry.id !== entryId));
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setError("");
-    if (!Number(totalComprovado) && !String(justificativa).trim()) {
-      setError("Informe o valor prestado ou escreva a justificativa.");
-      return;
-    }
     try {
       await onSave({
         totalComprovado,
+        prestacoes: entries,
         justificativa,
         lancadoAcms
       });
@@ -64,16 +147,55 @@ export function SettlementForm({ advance, onSave }) {
         </div>
       </div>
 
-      <label>
-        Valor utilizado
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          value={totalComprovado}
-          onChange={(event) => setTotalComprovado(event.target.value)}
-        />
-      </label>
+      <div className="settlement-entry-editor full-span">
+        <div className="settlement-entry-fields">
+          <label>
+            Valor da nota
+            <input
+              inputMode="decimal"
+              value={entryValue}
+              onChange={(event) => setEntryValue(event.target.value)}
+              placeholder="Ex.: 50,00"
+            />
+          </label>
+          <label>
+            Observacao
+            <input
+              value={entryDescription}
+              onChange={(event) => setEntryDescription(event.target.value)}
+              placeholder="Ex.: nota mercado"
+            />
+          </label>
+          <button className="button-primary" type="button" onClick={handleAddEntry}>
+            Adicionar
+          </button>
+        </div>
+        <p className="helper-text">
+          Digite cada nota separadamente. O sistema soma tudo e atualiza o saldo faltante.
+        </p>
+      </div>
+
+      <div className="settlement-entry-list full-span">
+        <div className="settlement-entry-total">
+          <strong>Valores lancados</strong>
+          <span>{entries.length} item(ns)</span>
+        </div>
+        {entries.length ? (
+          entries.map((entry) => (
+            <div className="settlement-entry-item" key={entry.id}>
+              <div>
+                <strong>{formatCurrency(entry.valor)}</strong>
+                <span>{entry.descricao || "Sem observacao"}</span>
+              </div>
+              <button className="button-danger" type="button" onClick={() => handleRemoveEntry(entry.id)}>
+                Remover
+              </button>
+            </div>
+          ))
+        ) : (
+          <p className="helper-text">Nenhum valor de nota lancado ainda.</p>
+        )}
+      </div>
 
       <label className="toggle-field">
         <input type="checkbox" checked={lancadoAcms} onChange={(event) => setLancadoAcms(event.target.checked)} />

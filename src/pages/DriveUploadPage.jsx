@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
+import { UploadProgressOverlay } from "../components/UploadProgressOverlay";
 import { useAppContext } from "../context/AppContext";
 import { formatDate } from "../utils/format";
 
@@ -30,6 +31,7 @@ export function DriveUploadPage() {
   const [feedbackType, setFeedbackType] = useState("success");
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [form, setForm] = useState({ title: "", notes: "" });
+  const [uploadProgress, setUploadProgress] = useState({ active: false, total: 0, completed: 0, currentName: "" });
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -196,14 +198,32 @@ export function DriveUploadPage() {
       return;
     }
     setUploading(true);
+    setUploadProgress({
+      active: true,
+      total: selectedFiles.length,
+      completed: 0,
+      currentName: selectedFiles[0]?.name || ""
+    });
     try {
-      for (const file of selectedFiles) {
+      for (const [index, file] of selectedFiles.entries()) {
+        setUploadProgress({
+          active: true,
+          total: selectedFiles.length,
+          completed: index,
+          currentName: file.name || getDefaultTitle(file)
+        });
         await actions.uploadFileAssetToSession({
           sessionId,
           accessCodeHash,
           file,
           title: selectedFiles.length === 1 ? form.title || getDefaultTitle(file) : getDefaultTitle(file),
           notes: form.notes
+        });
+        setUploadProgress({
+          active: true,
+          total: selectedFiles.length,
+          completed: index + 1,
+          currentName: file.name || getDefaultTitle(file)
         });
       }
       setSelectedFiles([]);
@@ -215,6 +235,7 @@ export function DriveUploadPage() {
       showError(error);
     } finally {
       setUploading(false);
+      setUploadProgress({ active: false, total: 0, completed: 0, currentName: "" });
     }
   }
 
@@ -272,6 +293,8 @@ export function DriveUploadPage() {
 
   return (
     <div className="drive-upload-shell">
+      <UploadProgressOverlay progress={uploadProgress} />
+
       {feedback ? (
         <div className={`files-toast ${feedbackType === "error" ? "is-error" : "is-success"}`}>
           <div>
