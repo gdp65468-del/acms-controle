@@ -1,13 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import JSZip from "jszip";
 import QRCode from "qrcode";
 import { Icon } from "../components/Icon";
 import { UploadProgressOverlay } from "../components/UploadProgressOverlay";
+import { QuickScanner } from "../components/QuickScanner";
 import { useAppContext } from "../context/AppContext";
 import { formatDate } from "../utils/format";
 
 function getDefaultTitle(file) {
   return file?.name || "";
+}
+
+const DEFAULT_IMAGE_ADJUSTMENTS = {
+  rotation: 0,
+  brightness: 100,
+  contrast: 100,
+  saturation: 100,
+  grayscale: 0,
+  cropTop: 0,
+  cropRight: 0,
+  cropBottom: 0,
+  cropLeft: 0
+};
+
+function buildImageFilter(adjustments) {
+  return [
+    `brightness(${adjustments.brightness}%)`,
+    `contrast(${adjustments.contrast}%)`,
+    `saturate(${adjustments.saturation}%)`,
+    `grayscale(${adjustments.grayscale}%)`
+  ].join(" ");
+}
+
+function normalizeRotation(value) {
+  return ((Number(value || 0) % 360) + 360) % 360;
+}
+
+function getAdjustedFileName(title) {
+  const baseName = String(title || "comprovante").replace(/\.[^.]+$/, "");
+  return `${baseName}-ajustado.jpg`;
+}
+
+function formatStorageSize(bytes, status = "READY") {
+  if (status === "MIGRATING") return "Preparando...";
+  const value = Math.max(0, Number(bytes || 0));
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 function formatAssetTypeLabel(asset) {
@@ -40,25 +84,44 @@ function getDescendantIds(folders, folderId) {
   return ids;
 }
 
-async function downloadAsset(asset) {
+async function fetchAssetBlob(asset) {
   const response = await fetch(asset.secureUrl);
   if (!response.ok) {
     throw new Error("Nao foi possivel baixar este arquivo.");
   }
-  const blob = await response.blob();
+  return response.blob();
+}
+
+function downloadBlob(blob, fileName) {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = asset.originalFileName || asset.title || "arquivo";
+  link.download = fileName || "arquivo";
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
-function ActionChip({ icon, label, onClick, variant = "default", type = "button" }) {
+async function downloadAsset(asset) {
+  const blob = await fetchAssetBlob(asset);
+  downloadBlob(blob, asset.originalFileName || asset.title || "arquivo");
+}
+
+function getFileExtension(asset) {
+  const sourceName = asset?.originalFileName || asset?.title || "arquivo";
+  const match = String(sourceName).match(/(\.[^.]+)$/);
+  return match ? match[1] : asset?.fileType === "pdf" ? ".pdf" : ".jpg";
+}
+
+function ActionChip({ icon, label, onClick, variant = "default", type = "button", disabled = false }) {
   return (
-    <button type={type} className={`files-action-chip ${variant !== "default" ? `is-${variant}` : ""}`} onClick={onClick}>
+    <button
+      type={type}
+      className={`files-action-chip ${variant !== "default" ? `is-${variant}` : ""}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
       <Icon name={icon} size={16} />
       <span>{label}</span>
     </button>
@@ -78,7 +141,7 @@ function StatPill({ icon, label, value }) {
 }
 
 export function FilesPage() {
-  const { fileFolders, fileAssets, session, actions } = useAppContext();
+  const { fileFolders, fileAssets, driveStats, session, actions } = useAppContext();
   const [currentFolderId, setCurrentFolderId] = useState("");
   const [currentSection, setCurrentSection] = useState("drive");
   const [selectedAssetId, setSelectedAssetId] = useState("");
@@ -87,6 +150,8 @@ export function FilesPage() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const [showQuickScanner, setShowQuickScanner] = useState(false);
   const [renameModal, setRenameModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
   const [menuState, setMenuState] = useState(null);
@@ -95,6 +160,9 @@ export function FilesPage() {
   const [lightboxZoom, setLightboxZoom] = useState(1);
   const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
   const [lightboxDragging, setLightboxDragging] = useState(false);
+  const [showAdjustPanel, setShowAdjustPanel] = useState(false);
+  const [imageAdjustments, setImageAdjustments] = useState({ ...DEFAULT_IMAGE_ADJUSTMENTS });
+  const [savingAdjustedVersion, setSavingAdjustedVersion] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrFolder, setQrFolder] = useState(null);
   const [qrSession, setQrSession] = useState(null);
@@ -106,6 +174,7 @@ export function FilesPage() {
   const [feedback, setFeedback] = useState("");
   const [feedbackType, setFeedbackType] = useState("success");
   const [uploading, setUploading] = useState(false);
+  const [bulkActionRunning, setBulkActionRunning] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ active: false, total: 0, completed: 0, currentName: "" });
   const cameraInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -378,6 +447,7 @@ export function FilesPage() {
   function resetLightboxView() {
     setLightboxZoom(1);
     setLightboxOffset({ x: 0, y: 0 });
+    setImageAdjustments({ ...DEFAULT_IMAGE_ADJUSTMENTS });
     lightboxDragRef.current = null;
     setLightboxDragging(false);
   }
@@ -385,6 +455,7 @@ export function FilesPage() {
   function openLightboxAssetByRecord(asset) {
     setLightboxAsset(asset);
     setSelectedAssetId(asset.id);
+    setShowAdjustPanel(false);
     resetLightboxView();
   }
 
@@ -597,6 +668,104 @@ export function FilesPage() {
     }
   }
 
+  async function handleBulkDigitized(digitized) {
+    if (!selectedAssetIds.length || bulkActionRunning) return;
+    setBulkActionRunning(true);
+    try {
+      await actions.toggleFileAssetsDigitized(selectedAssetIds, digitized);
+      showSuccess(
+        digitized
+          ? `${selectedAssetIds.length} arquivo(s) marcado(s) como digitado(s) no ACMS.`
+          : `${selectedAssetIds.length} arquivo(s) voltou(aram) para pendente.`
+      );
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBulkActionRunning(false);
+    }
+  }
+
+  function handleFilterSelectedPending() {
+    const pendingIds = selectedAssetIds.filter((assetId) => {
+      const asset = currentAssets.find((item) => item.id === assetId);
+      return asset && !asset.digitized;
+    });
+    setSelectedAssetIds(pendingIds);
+    setSelectedAssetId(pendingIds[0] || "");
+    showSuccess(`${pendingIds.length} arquivo(s) pendente(s) mantido(s) na selecao.`);
+  }
+
+  async function handleBulkDownload(asZip) {
+    if (!selectedAssets.length || bulkActionRunning) return;
+    setBulkActionRunning(true);
+    try {
+      const downloadedFiles = [];
+      for (const asset of selectedAssets) {
+        const blob = await fetchAssetBlob(asset);
+        const fileName = asset.originalFileName || asset.title || `arquivo-${asset.id}`;
+        downloadedFiles.push({ blob, fileName });
+      }
+
+      if (asZip) {
+        const zip = new JSZip();
+        downloadedFiles.forEach(({ blob, fileName }) => zip.file(fileName, blob));
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        downloadBlob(zipBlob, `comprovantes-${new Date().toISOString().slice(0, 10)}.zip`);
+        showSuccess(`${downloadedFiles.length} arquivo(s) compactado(s) em ZIP.`);
+      } else {
+        downloadedFiles.forEach(({ blob, fileName }, index) => {
+          window.setTimeout(() => downloadBlob(blob, fileName), index * 250);
+        });
+        showSuccess(`${downloadedFiles.length} arquivo(s) preparado(s) para download individual.`);
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBulkActionRunning(false);
+    }
+  }
+
+  async function handleBulkRename() {
+    if (!selectedAssets.length || bulkActionRunning) return;
+    const dateLabel = new Date().toISOString().slice(0, 10);
+    const pattern = window.prompt("Padrao dos nomes. O numero e a extensao serao adicionados automaticamente.", `${dateLabel} - comprovante`);
+    if (pattern === null || !pattern.trim()) return;
+
+    setBulkActionRunning(true);
+    try {
+      const normalizedPattern = pattern.trim().replace(/\.[^.]+$/, "");
+      await Promise.all(
+        selectedAssets.map((asset, index) =>
+          actions.renameFileAsset(
+            asset.id,
+            `${normalizedPattern} ${String(index + 1).padStart(2, "0")}${getFileExtension(asset)}`
+          )
+        )
+      );
+      showSuccess(`${selectedAssets.length} arquivo(s) renomeado(s) em lote.`);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBulkActionRunning(false);
+    }
+  }
+
+  async function handleBulkNotes() {
+    if (!selectedAssets.length || bulkActionRunning) return;
+    const notes = window.prompt("Observacao para os arquivos selecionados. Deixe vazio para limpar.", "Conferidos no fechamento de novembro.");
+    if (notes === null) return;
+
+    setBulkActionRunning(true);
+    try {
+      await actions.updateFileAssetsNotes(selectedAssetIds, notes.trim());
+      showSuccess(`${selectedAssets.length} arquivo(s) atualizado(s) com a observacao.`);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBulkActionRunning(false);
+    }
+  }
+
   async function openDriveUploadQr(folder, { regenerate = false } = {}) {
     if (!folder?.id) return;
     setQrLoading(true);
@@ -700,6 +869,127 @@ export function FilesPage() {
 
   function resetLightboxZoom() {
     resetLightboxView();
+  }
+
+  function fitLightboxImage() {
+    setLightboxZoom(1);
+    setLightboxOffset({ x: 0, y: 0 });
+  }
+
+  function rotateLightboxImage(degrees) {
+    setImageAdjustments((current) => ({
+      ...current,
+      rotation: normalizeRotation(current.rotation + degrees)
+    }));
+  }
+
+  function updateImageAdjustment(field, value) {
+    setImageAdjustments((current) => ({
+      ...current,
+      [field]: Number(value)
+    }));
+  }
+
+  function applyReceiptEnhancement() {
+    setImageAdjustments((current) => ({
+      ...current,
+      brightness: 108,
+      contrast: 142,
+      saturation: 72,
+      grayscale: 10
+    }));
+  }
+
+  async function handleSaveAdjustedVersion() {
+    if (!lightboxAsset || savingAdjustedVersion) return;
+    setSavingAdjustedVersion(true);
+    let sourceUrl = "";
+
+    try {
+      const response = await fetch(lightboxAsset.secureUrl);
+      if (!response.ok) {
+        throw new Error("Nao foi possivel carregar a imagem original para ajustar.");
+      }
+
+      const sourceBlob = await response.blob();
+      sourceUrl = URL.createObjectURL(sourceBlob);
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("Nao foi possivel preparar a imagem para ajuste."));
+        element.src = sourceUrl;
+      });
+
+      const cropLeft = Math.min(40, Math.max(0, Number(imageAdjustments.cropLeft || 0)));
+      const cropRight = Math.min(40, Math.max(0, Number(imageAdjustments.cropRight || 0)));
+      const cropTop = Math.min(40, Math.max(0, Number(imageAdjustments.cropTop || 0)));
+      const cropBottom = Math.min(40, Math.max(0, Number(imageAdjustments.cropBottom || 0)));
+      const horizontalCrop = Math.min(85, cropLeft + cropRight);
+      const verticalCrop = Math.min(85, cropTop + cropBottom);
+      const sourceX = Math.round(image.naturalWidth * (cropLeft / 100));
+      const sourceY = Math.round(image.naturalHeight * (cropTop / 100));
+      const sourceWidth = Math.max(1, Math.round(image.naturalWidth * ((100 - horizontalCrop) / 100)));
+      const sourceHeight = Math.max(1, Math.round(image.naturalHeight * ((100 - verticalCrop) / 100)));
+      const rotation = normalizeRotation(imageAdjustments.rotation);
+      const quarterTurn = rotation === 90 || rotation === 270;
+      const canvas = document.createElement("canvas");
+      canvas.width = quarterTurn ? sourceHeight : sourceWidth;
+      canvas.height = quarterTurn ? sourceWidth : sourceHeight;
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Nao foi possivel criar a imagem ajustada.");
+      }
+
+      context.filter = buildImageFilter(imageAdjustments);
+      context.translate(canvas.width / 2, canvas.height / 2);
+      context.rotate((rotation * Math.PI) / 180);
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        -sourceWidth / 2,
+        -sourceHeight / 2,
+        sourceWidth,
+        sourceHeight
+      );
+
+      const adjustedBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("Nao foi possivel gerar a nova versao da imagem."))),
+          "image/jpeg",
+          0.92
+        );
+      });
+
+      const adjustedFile = new File([adjustedBlob], getAdjustedFileName(lightboxAsset.title), {
+        type: "image/jpeg",
+        lastModified: Date.now()
+      });
+      const folder = activeFolders.find((item) => item.id === lightboxAsset.folderId);
+      const adjustedTitle = getAdjustedFileName(lightboxAsset.title);
+
+      await actions.uploadFileAsset({
+        file: adjustedFile,
+        folderId: lightboxAsset.folderId || "",
+        folderPath: folder ? buildFolderPath(folder, activeFolders) : "",
+        title: adjustedTitle,
+        notes: `Nova versao ajustada de ${lightboxAsset.title}.`,
+        uploadedBy: currentUserId
+      });
+
+      showSuccess("Nova versao ajustada salva no Drive. O arquivo original foi preservado.");
+      setShowAdjustPanel(false);
+    } catch (error) {
+      showError(error);
+    } finally {
+      if (sourceUrl) {
+        URL.revokeObjectURL(sourceUrl);
+      }
+      setSavingAdjustedVersion(false);
+    }
   }
 
   function openAsset(asset) {
@@ -998,7 +1288,7 @@ export function FilesPage() {
                   <Icon name="folder" size={18} />
                   <span>Nova pasta</span>
                 </button>
-                <button type="button" className="button-primary" onClick={() => setShowUploadModal(true)}>
+                <button type="button" className="button-primary" onClick={() => setShowCreateMenu(true)}>
                   <Icon name="upload" size={18} />
                   <span>Criar ou carregar</span>
                 </button>
@@ -1028,6 +1318,11 @@ export function FilesPage() {
         <section className="files-drive-summary files-drive-summary-compact">
           <StatPill icon="folder" label="Pastas ativas" value={activeFolders.length} />
           <StatPill icon="fileText" label="Arquivos" value={activeAssets.length} />
+          <StatPill
+            icon="download"
+            label="Espaco usado"
+            value={formatStorageSize(driveStats?.totalBytes, driveStats?.status)}
+          />
           <StatPill icon="check" label="Digitadas no ACMS" value={digitizedCount} />
           <StatPill icon="trash" label="Na lixeira" value={trashedFolders.length + trashedAssets.length} />
         </section>
@@ -1075,11 +1370,74 @@ export function FilesPage() {
                     <div className="files-inspector-card files-current-actions">
                       <div className="files-section-title">
                         <h3>Selecao em lote</h3>
-                        <p>Mova ou envie varios arquivos para a lixeira de uma so vez.</p>
+                        <p>Organize, confira e baixe varios arquivos de uma so vez.</p>
                       </div>
-                      <div className="files-inspector-actions">
-                        <ActionChip icon="move" label="Mover selecionados" onClick={() => openMoveAssets(selectedAssetIds)} />
-                        <ActionChip icon="trash" label="Enviar para lixeira" variant="danger" onClick={handleTrashSelected} />
+                      <div className="files-inspector-actions files-bulk-actions">
+                        <ActionChip
+                          icon="check"
+                          label="Marcar digitados"
+                          onClick={() => handleBulkDigitized(true)}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="refresh"
+                          label="Voltar pendentes"
+                          variant="success"
+                          onClick={() => handleBulkDigitized(false)}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="download"
+                          label="Baixar ZIP"
+                          onClick={() => handleBulkDownload(true)}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="download"
+                          label="Baixar arquivos"
+                          onClick={() => handleBulkDownload(false)}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="edit"
+                          label="Renomear em lote"
+                          onClick={handleBulkRename}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="edit"
+                          label="Adicionar observacao"
+                          onClick={handleBulkNotes}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="check"
+                          label="Somente pendentes"
+                          onClick={handleFilterSelectedPending}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="move"
+                          label="Mover selecionados"
+                          onClick={() => openMoveAssets(selectedAssetIds)}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="trash"
+                          label="Enviar para lixeira"
+                          variant="danger"
+                          onClick={handleTrashSelected}
+                          disabled={bulkActionRunning}
+                        />
+                        <ActionChip
+                          icon="close"
+                          label="Limpar selecao"
+                          onClick={() => {
+                            setSelectedAssetIds([]);
+                            setSelectedAssetId("");
+                          }}
+                          disabled={bulkActionRunning}
+                        />
                       </div>
                     </div>
                   ) : null}
@@ -1462,6 +1820,37 @@ export function FilesPage() {
         </div>
       ) : null}
 
+      {showCreateMenu ? (
+        <div className="files-modal-backdrop" onClick={() => setShowCreateMenu(false)}>
+          <div className="files-modal-card quick-scanner-menu" onClick={(event) => event.stopPropagation()}>
+            <div className="files-section-title">
+              <h3>Criar ou carregar</h3>
+              <p>Destino: {currentPath || "Meu drive"}</p>
+            </div>
+            <button type="button" className="quick-scanner-menu-primary" onClick={() => { setShowCreateMenu(false); setShowQuickScanner(true); }}>
+              <Icon name="camera" size={22} />
+              <span><strong>Scanner Rápido</strong><small>Captura contínua de comprovantes</small></span>
+            </button>
+            <button type="button" className="button-ghost" onClick={() => { setShowCreateMenu(false); setShowUploadModal(true); }}>
+              <Icon name="upload" size={20} /> Enviar arquivos (fotos ou PDF)
+            </button>
+            <button type="button" className="button-ghost" onClick={() => { setShowCreateMenu(false); setShowCreateFolderModal(true); }}>
+              <Icon name="folder" size={20} /> Criar pasta
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {showQuickScanner ? (
+        <QuickScanner
+          folderId={currentFolderId}
+          folderPath={currentPath}
+          ownerUid={currentUserId}
+          actions={actions}
+          onClose={() => setShowQuickScanner(false)}
+        />
+      ) : null}
+
       {showUploadModal ? (
         <div className="files-modal-backdrop" onClick={() => !uploading && setShowUploadModal(false)}>
           <div className="files-modal-card files-upload-modal" onClick={(event) => event.stopPropagation()}>
@@ -1601,7 +1990,13 @@ export function FilesPage() {
       ) : null}
 
       {lightboxAsset ? (
-        <div className="files-modal-backdrop" onClick={() => setLightboxAsset(null)}>
+        <div
+          className="files-modal-backdrop"
+          onClick={() => {
+            setLightboxAsset(null);
+            setShowAdjustPanel(false);
+          }}
+        >
           <div className="files-lightbox" onClick={(event) => event.stopPropagation()}>
             <div className="files-lightbox-top">
               <div>
@@ -1630,12 +2025,124 @@ export function FilesPage() {
                 />
                 <ActionChip icon="zoomOut" label="Zoom -" onClick={() => setLightboxZoom((current) => Math.max(0.5, current - 0.25))} />
                 <ActionChip icon="zoomIn" label="Zoom +" onClick={() => setLightboxZoom((current) => Math.min(3, current + 0.25))} />
-                <ActionChip icon="grid" label="Ajustar" onClick={() => setLightboxOffset({ x: 0, y: 0 })} />
+                <ActionChip icon="grid" label="Ajustar" onClick={() => setShowAdjustPanel((current) => !current)} />
                 <ActionChip icon="refresh" label="Reset" onClick={resetLightboxZoom} />
                 <ActionChip icon="download" label="Baixar" onClick={() => handleDownloadAsset(lightboxAsset)} />
-                <ActionChip icon="close" label="Fechar" onClick={() => setLightboxAsset(null)} />
+                <ActionChip
+                  icon="close"
+                  label="Fechar"
+                  onClick={() => {
+                    setLightboxAsset(null);
+                    setShowAdjustPanel(false);
+                  }}
+                />
               </div>
             </div>
+            {showAdjustPanel ? (
+              <div className="files-adjust-panel">
+                <div className="files-adjust-heading">
+                  <div>
+                    <strong>Ajustar comprovante</strong>
+                    <p>Altere a visualizacao e salve uma nova versao sem apagar o original.</p>
+                  </div>
+                  <span className="files-adjust-badge">Nova versao</span>
+                </div>
+
+                <div className="files-adjust-actions">
+                  <button type="button" className="button-ghost" onClick={() => rotateLightboxImage(-90)}>
+                    ↶ Girar esquerda
+                  </button>
+                  <button type="button" className="button-ghost" onClick={() => rotateLightboxImage(90)}>
+                    ↷ Girar direita
+                  </button>
+                  <button type="button" className="button-ghost" onClick={fitLightboxImage}>
+                    Ajustar à tela
+                  </button>
+                  <button type="button" className="button-ghost" onClick={applyReceiptEnhancement}>
+                    Melhorar comprovante
+                  </button>
+                  <button type="button" className="button-ghost" onClick={resetLightboxZoom}>
+                    Restaurar ajustes
+                  </button>
+                </div>
+
+                <div className="files-adjust-controls">
+                  <label className="files-adjust-control">
+                    <span>Brilho <strong>{imageAdjustments.brightness}%</strong></span>
+                    <input
+                      type="range"
+                      min="70"
+                      max="140"
+                      value={imageAdjustments.brightness}
+                      onChange={(event) => updateImageAdjustment("brightness", event.target.value)}
+                    />
+                  </label>
+                  <label className="files-adjust-control">
+                    <span>Contraste <strong>{imageAdjustments.contrast}%</strong></span>
+                    <input
+                      type="range"
+                      min="70"
+                      max="180"
+                      value={imageAdjustments.contrast}
+                      onChange={(event) => updateImageAdjustment("contrast", event.target.value)}
+                    />
+                  </label>
+                  <label className="files-adjust-control">
+                    <span>Saturação <strong>{imageAdjustments.saturation}%</strong></span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="150"
+                      value={imageAdjustments.saturation}
+                      onChange={(event) => updateImageAdjustment("saturation", event.target.value)}
+                    />
+                  </label>
+                  <label className="files-adjust-control">
+                    <span>Escala de cinza <strong>{imageAdjustments.grayscale}%</strong></span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={imageAdjustments.grayscale}
+                      onChange={(event) => updateImageAdjustment("grayscale", event.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="files-adjust-crop">
+                  <div className="files-adjust-crop-title">
+                    <strong>Recortar bordas</strong>
+                    <span>O recorte sera aplicado ao salvar a nova versao.</span>
+                  </div>
+                  <div className="files-adjust-crop-grid">
+                    {[
+                      ["cropTop", "Topo"],
+                      ["cropRight", "Direita"],
+                      ["cropBottom", "Base"],
+                      ["cropLeft", "Esquerda"]
+                    ].map(([field, label]) => (
+                      <label className="files-adjust-control" key={field}>
+                        <span>{label} <strong>{imageAdjustments[field]}%</strong></span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="40"
+                          value={imageAdjustments[field]}
+                          onChange={(event) => updateImageAdjustment(field, event.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="files-adjust-footer">
+                  <span>Rotacao atual: {imageAdjustments.rotation}°</span>
+                  <button type="button" className="button-primary" onClick={handleSaveAdjustedVersion} disabled={savingAdjustedVersion}>
+                    {savingAdjustedVersion ? "Salvando nova versao..." : "Salvar como nova versao"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="files-lightbox-image-wrap" onWheel={handleLightboxWheel}>
               <button
                 type="button"
@@ -1651,9 +2158,11 @@ export function FilesPage() {
                 alt={lightboxAsset.title}
                 onPointerDown={handleLightboxPointerDown}
                 style={{
-                  transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) scale(${lightboxZoom})`,
+                  transform: `translate(${lightboxOffset.x}px, ${lightboxOffset.y}px) rotate(${imageAdjustments.rotation}deg) scale(${lightboxZoom})`,
                   transformOrigin: "center center",
-                  cursor: lightboxDragging ? "grabbing" : "grab"
+                  cursor: lightboxDragging ? "grabbing" : "grab",
+                  filter: buildImageFilter(imageAdjustments),
+                  clipPath: `inset(${imageAdjustments.cropTop}% ${imageAdjustments.cropRight}% ${imageAdjustments.cropBottom}% ${imageAdjustments.cropLeft}%)`
                 }}
               />
               <button
@@ -1670,7 +2179,7 @@ export function FilesPage() {
       ) : null}
 
       {currentSection === "drive" ? (
-        <button type="button" className="files-floating-upload" onClick={() => setShowUploadModal(true)}>
+        <button type="button" className="files-floating-upload" onClick={() => setShowCreateMenu(true)}>
           <Icon name="upload" size={22} />
         </button>
       ) : null}

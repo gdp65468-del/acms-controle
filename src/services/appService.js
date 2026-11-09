@@ -9,6 +9,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -30,6 +31,7 @@ const COLLECTIONS = {
   authorizations: "autorizacoes_repasse",
   assistantAccess: "acesso_auxiliar",
   driveUploadSessions: "sessoes_upload_drive",
+  driveStats: "resumos_drive",
   fileFolders: "pastas_arquivos",
   fileAssets: "arquivos"
 };
@@ -165,6 +167,94 @@ function addMinutes(dateLike, minutes = DRIVE_UPLOAD_SESSION_TIMEOUT_MINUTES) {
   const baseDate =
     typeof dateLike?.toDate === "function" ? dateLike.toDate() : new Date(dateLike || Date.now());
   return new Date(baseDate.getTime() + minutes * 60 * 1000);
+}
+
+async function adjustDriveStorageStats(deltaBytes) {
+  const delta = Math.round(Number(deltaBytes || 0));
+  if (!firebaseEnabled || !db || !delta) return;
+
+  const statsRef = doc(db, COLLECTIONS.driveStats, "geral");
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(statsRef);
+    const currentBytes = Math.max(0, Number(snapshot.data()?.totalBytes || 0));
+    transaction.set(
+      statsRef,
+      {
+        totalBytes: Math.max(0, currentBytes + delta),
+        updatedAt: serverTimestamp(),
+        version: 1
+      },
+      { merge: true }
+    );
+  });
+}
+
+async function measureExistingAssetSize(asset) {
+  const knownSize = Number(asset?.fileSizeBytes || 0);
+  if (knownSize > 0) return knownSize;
+  if (!asset?.secureUrl) return 0;
+
+  try {
+    const response = await fetch(asset.secureUrl);
+    if (!response.ok) return 0;
+    const blob = await response.blob();
+    return blob.size;
+  } catch {
+    return 0;
+  }
+}
+
+async function initializeDriveStorageStats(fileAssets = []) {
+  if (!firebaseEnabled || !db) return;
+
+  const statsRef = doc(db, COLLECTIONS.driveStats, "geral");
+  const claimedMigration = await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(statsRef);
+    if (snapshot.exists()) return false;
+    transaction.set(statsRef, {
+      totalBytes: 0,
+      status: "MIGRATING",
+      updatedAt: serverTimestamp(),
+      version: 1
+    });
+    return true;
+  });
+
+  if (!claimedMigration) return;
+
+  let totalBytes = 0;
+  for (let index = 0; index < fileAssets.length; index += 4) {
+    const chunk = fileAssets.slice(index, index + 4);
+    const measured = await Promise.all(
+      chunk.map(async (asset) => ({
+        asset,
+        size: await measureExistingAssetSize(asset)
+      }))
+    );
+    const batch = writeBatch(db);
+    let updates = 0;
+    measured.forEach(({ asset, size }) => {
+      if (size > 0 && Number(asset.fileSizeBytes || 0) !== size) {
+        batch.update(doc(db, COLLECTIONS.fileAssets, asset.id), { fileSizeBytes: size });
+        updates += 1;
+      }
+      totalBytes += size;
+    });
+    if (updates) {
+      await batch.commit();
+    }
+  }
+
+  await setDoc(
+    statsRef,
+    {
+      totalBytes,
+      status: "READY",
+      updatedAt: serverTimestamp(),
+      version: 1
+    },
+    { merge: true }
+  );
 }
 
 function toDateValue(value) {
@@ -367,7 +457,7 @@ function mapFileFolder(id, data) {
 }
 
 function mapFileAsset(id, data) {
-  return { id, digitized: false, digitizedAt: "", deletedAt: "", ...data };
+  return { id, fileSizeBytes: 0, digitized: false, digitizedAt: "", deletedAt: "", ...data };
 }
 
 function sortByDateDesc(items, field) {
@@ -477,6 +567,7 @@ export const appService = {
       history: [],
       fileFolders: [],
       fileAssets: [],
+      driveStats: { totalBytes: 0, status: "PENDING" },
       session: { currentUser: null, assistantUser: null }
     };
 
@@ -488,6 +579,7 @@ export const appService = {
         history: [...state.history],
         fileFolders: [...state.fileFolders],
         fileAssets: [...state.fileAssets],
+        driveStats: { ...state.driveStats },
         session: {
           currentUser: state.session.currentUser ? { ...state.session.currentUser } : null,
           assistantUser: state.session.assistantUser ? { ...state.session.assistantUser } : null
@@ -508,6 +600,7 @@ export const appService = {
       state.history = [];
       state.fileFolders = [];
       state.fileAssets = [];
+      state.driveStats = { totalBytes: 0, status: "PENDING" };
       state.session.currentUser = null;
       state.session.assistantUser = null;
     }
@@ -547,6 +640,9 @@ export const appService = {
             "createdAt"
           );
           emit();
+          initializeDriveStorageStats(state.fileAssets).catch((error) => {
+            console.error("Nao foi possivel inicializar o resumo de armazenamento.", error);
+          });
         })
         .catch((error) => {
           console.error("Nao foi possivel carregar os dados iniciais do Firestore.", error);
@@ -605,6 +701,19 @@ export const appService = {
             emit();
           },
           (error) => console.error("Erro ao ouvir arquivos.", error)
+        ),
+        onSnapshot(
+          doc(db, COLLECTIONS.driveStats, "geral"),
+          (snapshot) => {
+            const data = snapshot.exists() ? snapshot.data() || {} : {};
+            state.driveStats = {
+              totalBytes: Math.max(0, Number(data.totalBytes || 0)),
+              status: data.status || (snapshot.exists() ? "READY" : "PENDING"),
+              updatedAt: data.updatedAt || ""
+            };
+            emit();
+          },
+          (error) => console.error("Erro ao ouvir resumo de armazenamento.", error)
         )
       ];
     }
@@ -1152,7 +1261,8 @@ export const appService = {
         ...payload,
         accessCodeHash,
         title: finalTitle,
-        file: preparedFile
+        file: preparedFile,
+        fileSizeBytes: preparedFile.size
       });
     }
 
@@ -1179,6 +1289,7 @@ export const appService = {
       secureUrl: cloudinaryResult.secure_url || "",
       thumbnailUrl: fileType === "image" ? cloudinaryResult.secure_url || "" : "",
       notes: String(payload.notes || "").trim(),
+      fileSizeBytes: preparedFile.size,
       digitized: false,
       digitizedAt: "",
       deletedAt: "",
@@ -1190,6 +1301,7 @@ export const appService = {
       sessionCodeHash: accessCodeHash
     };
     const docRef = await addDoc(collection(db, COLLECTIONS.fileAssets), record);
+    await adjustDriveStorageStats(preparedFile.size);
     await this.touchDriveUploadSession(payload.sessionId, accessCodeHash);
     return { id: docRef.id, ...record };
   },
@@ -1277,6 +1389,7 @@ export const appService = {
     }
 
     await updateDoc(assetRef, { deletedAt: new Date().toISOString() });
+    await adjustDriveStorageStats(-Number(asset.fileSizeBytes || 0));
     await this.touchDriveUploadSession(sessionId, accessCodeHash);
     return true;
   },
@@ -1294,6 +1407,7 @@ export const appService = {
   },
 
   async uploadFileAsset(payload) {
+    const scannerCaptureId = String(payload.scannerCaptureId || "");
     const fileType = getFileAssetType(payload.file);
     if (!fileType) {
       throw new Error("Envie apenas imagem ou PDF.");
@@ -1313,10 +1427,13 @@ export const appService = {
         originalFileName: payload.file.name,
         fileType,
         mimeType: preparedFile.type,
+        fileSizeBytes: preparedFile.size,
         secureUrl,
         thumbnailUrl: fileType === "image" ? secureUrl : "",
         notes: String(payload.notes || "").trim(),
-        uploadedBy: payload.uploadedBy
+        uploadedBy: payload.uploadedBy,
+        scannerCaptureId,
+        scannerReplaceAssetId: String(payload.scannerReplaceAssetId || "")
       });
     }
 
@@ -1330,6 +1447,12 @@ export const appService = {
     formData.append("title", finalTitle);
     formData.append("notes", String(payload.notes || "").trim());
     formData.append("uploadedBy", String(payload.uploadedBy || ""));
+    if (scannerCaptureId) {
+      formData.append("scannerCaptureId", scannerCaptureId);
+      if (payload.scannerReplaceAssetId) {
+        formData.append("scannerReplaceAssetId", String(payload.scannerReplaceAssetId));
+      }
+    }
     formData.append("file", preparedFile, preparedFile.name || payload.file.name || "arquivo");
 
     const response = await fetch("/api/files/upload", {
@@ -1392,12 +1515,18 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.trashFileAssets(assetIds);
     }
+    const snapshots = await Promise.all(assetIds.map((assetId) => getDoc(doc(db, COLLECTIONS.fileAssets, assetId))));
+    const activeAssets = snapshots
+      .filter((snapshot) => snapshot.exists() && !snapshot.data()?.deletedAt)
+      .map((snapshot) => snapshot.data() || {});
+    const removedBytes = activeAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     const deletedAt = new Date().toISOString();
     assetIds.forEach((assetId) => {
       batch.update(doc(db, COLLECTIONS.fileAssets, assetId), { deletedAt });
     });
     await batch.commit();
+    await adjustDriveStorageStats(-removedBytes);
   },
 
   async trashFileFolder(folderId, folders = [], assets = []) {
@@ -1406,27 +1535,36 @@ export const appService = {
     }
     const folderIds = [folderId, ...getFolderDescendantIds(folders, folderId)];
     const deletedAt = new Date().toISOString();
+    const activeAssets = assets.filter(
+      (item) => folderIds.includes(String(item.folderId || "")) && !item.deletedAt
+    );
+    const removedBytes = activeAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     folderIds.forEach((id) => {
       batch.update(doc(db, COLLECTIONS.fileFolders, id), { deletedAt });
     });
-    assets
-      .filter((item) => folderIds.includes(String(item.folderId || "")))
-      .forEach((item) => {
-        batch.update(doc(db, COLLECTIONS.fileAssets, item.id), { deletedAt });
-      });
+    activeAssets.forEach((item) => {
+      batch.update(doc(db, COLLECTIONS.fileAssets, item.id), { deletedAt });
+    });
     await batch.commit();
+    await adjustDriveStorageStats(-removedBytes);
   },
 
   async restoreFileAssets(assetIds) {
     if (!firebaseEnabled) {
       return localDb.restoreFileAssets(assetIds);
     }
+    const snapshots = await Promise.all(assetIds.map((assetId) => getDoc(doc(db, COLLECTIONS.fileAssets, assetId))));
+    const trashedAssets = snapshots
+      .filter((snapshot) => snapshot.exists() && snapshot.data()?.deletedAt)
+      .map((snapshot) => snapshot.data() || {});
+    const restoredBytes = trashedAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     assetIds.forEach((assetId) => {
       batch.update(doc(db, COLLECTIONS.fileAssets, assetId), { deletedAt: "" });
     });
     await batch.commit();
+    await adjustDriveStorageStats(restoredBytes);
   },
 
   async restoreFileFolder(folderId, folders = [], assets = []) {
@@ -1434,27 +1572,36 @@ export const appService = {
       return localDb.restoreFileFolder(folderId);
     }
     const folderIds = [folderId, ...getFolderDescendantIds(folders, folderId)];
+    const trashedAssets = assets.filter(
+      (item) => folderIds.includes(String(item.folderId || "")) && item.deletedAt
+    );
+    const restoredBytes = trashedAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     folderIds.forEach((id) => {
       batch.update(doc(db, COLLECTIONS.fileFolders, id), { deletedAt: "" });
     });
-    assets
-      .filter((item) => folderIds.includes(String(item.folderId || "")))
-      .forEach((item) => {
-        batch.update(doc(db, COLLECTIONS.fileAssets, item.id), { deletedAt: "" });
-      });
+    trashedAssets.forEach((item) => {
+      batch.update(doc(db, COLLECTIONS.fileAssets, item.id), { deletedAt: "" });
+    });
     await batch.commit();
+    await adjustDriveStorageStats(restoredBytes);
   },
 
   async deleteFileAssets(assetIds) {
     if (!firebaseEnabled) {
       return localDb.deleteFileAssets(assetIds);
     }
+    const snapshots = await Promise.all(assetIds.map((assetId) => getDoc(doc(db, COLLECTIONS.fileAssets, assetId))));
+    const activeAssets = snapshots
+      .filter((snapshot) => snapshot.exists() && !snapshot.data()?.deletedAt)
+      .map((snapshot) => snapshot.data() || {});
+    const removedBytes = activeAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     assetIds.forEach((assetId) => {
       batch.delete(doc(db, COLLECTIONS.fileAssets, assetId));
     });
     await batch.commit();
+    await adjustDriveStorageStats(-removedBytes);
   },
 
   async deleteFileFolder(folderId, folders = [], assets = []) {
@@ -1462,16 +1609,19 @@ export const appService = {
       return localDb.deleteFileFolder(folderId);
     }
     const folderIds = [folderId, ...getFolderDescendantIds(folders, folderId)];
+    const activeAssets = assets.filter(
+      (item) => folderIds.includes(String(item.folderId || "")) && !item.deletedAt
+    );
+    const removedBytes = activeAssets.reduce((total, asset) => total + Number(asset.fileSizeBytes || 0), 0);
     const batch = writeBatch(db);
     folderIds.forEach((id) => {
       batch.delete(doc(db, COLLECTIONS.fileFolders, id));
     });
-    assets
-      .filter((item) => folderIds.includes(String(item.folderId || "")))
-      .forEach((item) => {
-        batch.delete(doc(db, COLLECTIONS.fileAssets, item.id));
-      });
+    activeAssets.forEach((item) => {
+      batch.delete(doc(db, COLLECTIONS.fileAssets, item.id));
+    });
     await batch.commit();
+    await adjustDriveStorageStats(-removedBytes);
   },
 
   async toggleFileDigitized(assetId, digitized) {
@@ -1482,6 +1632,32 @@ export const appService = {
       digitized: Boolean(digitized),
       digitizedAt: digitized ? new Date().toISOString() : ""
     });
+  },
+
+  async toggleFileAssetsDigitized(assetIds, digitized) {
+    if (!firebaseEnabled) {
+      return localDb.toggleFileAssetsDigitized(assetIds, digitized);
+    }
+    const batch = writeBatch(db);
+    const digitizedAt = digitized ? new Date().toISOString() : "";
+    assetIds.forEach((assetId) => {
+      batch.update(doc(db, COLLECTIONS.fileAssets, assetId), {
+        digitized: Boolean(digitized),
+        digitizedAt
+      });
+    });
+    await batch.commit();
+  },
+
+  async updateFileAssetsNotes(assetIds, notes) {
+    if (!firebaseEnabled) {
+      return localDb.updateFileAssetsNotes(assetIds, notes);
+    }
+    const batch = writeBatch(db);
+    assetIds.forEach((assetId) => {
+      batch.update(doc(db, COLLECTIONS.fileAssets, assetId), { notes: String(notes || "").trim() });
+    });
+    await batch.commit();
   },
 
   async saveSettlement(advance, payload) {

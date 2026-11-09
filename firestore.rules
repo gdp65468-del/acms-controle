@@ -55,6 +55,11 @@ service cloud.firestore {
       allow read, create, update, delete: if isTreasurer();
     }
 
+    match /resumos_drive/{summaryId} {
+      allow read, create, update: if isTreasurer();
+      allow delete: if false;
+    }
+
     match /acesso_auxiliar/{token} {
       allow read, create, update, delete: if isTreasurer();
 

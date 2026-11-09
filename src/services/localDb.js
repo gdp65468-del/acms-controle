@@ -28,7 +28,8 @@ function createSeed() {
     authorizations: clone(mockAuthorizations),
     history: clone(mockHistory),
     fileFolders: clone(mockFileFolders),
-    fileAssets: clone(mockFileAssets),
+    fileAssets: clone(mockFileAssets).map((item) => ({ fileSizeBytes: 0, ...item })),
+    driveStats: { totalBytes: 0, status: "READY", updatedAt: new Date().toISOString() },
     driveUploadSessions: [],
     assistantAccess: {
       assistantId: mockAuxiliaryUser.id,
@@ -63,6 +64,11 @@ function readStore() {
   parsed.history ||= [];
   parsed.fileFolders ||= clone(mockFileFolders);
   parsed.fileAssets ||= clone(mockFileAssets);
+  parsed.driveStats ||= {
+    totalBytes: parsed.fileAssets.reduce((total, item) => total + Number(item.fileSizeBytes || 0), 0),
+    status: "READY",
+    updatedAt: new Date().toISOString()
+  };
   parsed.driveUploadSessions ||= [];
   parsed.assistantAccess ||= {
     assistantId: parsed.session?.assistantUser?.id || mockAuxiliaryUser.id,
@@ -83,6 +89,7 @@ function readStore() {
   }));
   parsed.fileAssets = parsed.fileAssets.map((item) => ({
     folderId: "",
+    fileSizeBytes: 0,
     digitized: false,
     digitizedAt: "",
     deletedAt: "",
@@ -103,6 +110,14 @@ function readStore() {
 
 function writeStore(store) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+
+function adjustLocalDriveStorage(store, deltaBytes) {
+  const delta = Math.round(Number(deltaBytes || 0));
+  store.driveStats ||= { totalBytes: 0, status: "READY" };
+  store.driveStats.totalBytes = Math.max(0, Number(store.driveStats.totalBytes || 0) + delta);
+  store.driveStats.status = "READY";
+  store.driveStats.updatedAt = new Date().toISOString();
 }
 
 function generateId(prefix) {
@@ -846,6 +861,7 @@ export const localDb = {
       originalFileName: payload.file.name,
       fileType: payload.file.type.includes("pdf") ? "pdf" : "image",
       mimeType: payload.file.type || "",
+      fileSizeBytes: Number(payload.file.size || 0),
       cloudinaryPublicId: "",
       secureUrl,
       thumbnailUrl: payload.file.type.includes("pdf") ? "" : secureUrl,
@@ -906,6 +922,7 @@ export const localDb = {
       throw new Error("Codigo de acesso invalido.");
     }
     asset.deletedAt = new Date().toISOString();
+    adjustLocalDriveStorage(store, -Number(asset.fileSizeBytes || 0));
     session.lastActiveAt = new Date().toISOString();
     session.expiresAt = addMinutes(session.lastActiveAt).toISOString();
     writeStore(store);
@@ -926,18 +943,23 @@ export const localDb = {
 
   uploadFileAsset(payload) {
     const store = readStore();
+    if (payload.scannerCaptureId) {
+      const existing = store.fileAssets.find((item) => item.id === payload.scannerCaptureId);
+      if (existing) return existing;
+    }
     const folderExists = !payload.folderId || store.fileFolders.some((item) => item.id === payload.folderId);
     if (!folderExists) {
       throw new Error("Selecione uma pasta valida.");
     }
 
     const asset = {
-      id: generateId("asset"),
+      id: payload.scannerCaptureId || generateId("asset"),
       folderId: payload.folderId,
       title: payload.title,
       originalFileName: payload.originalFileName,
       fileType: payload.fileType,
       mimeType: payload.mimeType || "",
+      fileSizeBytes: Number(payload.fileSizeBytes || 0),
       cloudinaryPublicId: payload.cloudinaryPublicId || "",
       secureUrl: payload.secureUrl,
       thumbnailUrl: payload.thumbnailUrl || payload.secureUrl,
@@ -946,10 +968,22 @@ export const localDb = {
       digitizedAt: "",
       deletedAt: "",
       uploadedBy: payload.uploadedBy,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(payload.scannerCaptureId
+        ? { scannerCaptureId: payload.scannerCaptureId, scannerOwnerUid: payload.uploadedBy }
+        : {})
     };
 
+    if (payload.scannerReplaceAssetId) {
+      const previous = store.fileAssets.find((item) => item.id === payload.scannerReplaceAssetId);
+      if (!previous || previous.deletedAt || previous.scannerOwnerUid !== payload.uploadedBy) {
+        throw new Error("A captura original nao pode ser substituida.");
+      }
+      previous.deletedAt = new Date().toISOString();
+      adjustLocalDriveStorage(store, -Number(previous.fileSizeBytes || 0));
+    }
     store.fileAssets.unshift(asset);
+    adjustLocalDriveStorage(store, asset.fileSizeBytes);
     writeStore(store);
     notify();
     return asset;
@@ -1008,11 +1042,14 @@ export const localDb = {
   trashFileAssets(assetIds) {
     const store = readStore();
     const deletedAt = new Date().toISOString();
+    let removedBytes = 0;
     store.fileAssets.forEach((item) => {
-      if (assetIds.includes(item.id)) {
+      if (assetIds.includes(item.id) && !item.deletedAt) {
         item.deletedAt = deletedAt;
+        removedBytes += Number(item.fileSizeBytes || 0);
       }
     });
+    adjustLocalDriveStorage(store, -removedBytes);
     writeStore(store);
     notify();
   },
@@ -1021,27 +1058,33 @@ export const localDb = {
     const store = readStore();
     const folderIds = [folderId, ...getFolderDescendantIds(store.fileFolders, folderId)];
     const deletedAt = new Date().toISOString();
+    let removedBytes = 0;
     store.fileFolders.forEach((item) => {
       if (folderIds.includes(item.id)) {
         item.deletedAt = deletedAt;
       }
     });
     store.fileAssets.forEach((item) => {
-      if (folderIds.includes(item.folderId || "")) {
+      if (folderIds.includes(item.folderId || "") && !item.deletedAt) {
         item.deletedAt = deletedAt;
+        removedBytes += Number(item.fileSizeBytes || 0);
       }
     });
+    adjustLocalDriveStorage(store, -removedBytes);
     writeStore(store);
     notify();
   },
 
   restoreFileAssets(assetIds) {
     const store = readStore();
+    let restoredBytes = 0;
     store.fileAssets.forEach((item) => {
-      if (assetIds.includes(item.id)) {
+      if (assetIds.includes(item.id) && item.deletedAt) {
         item.deletedAt = "";
+        restoredBytes += Number(item.fileSizeBytes || 0);
       }
     });
+    adjustLocalDriveStorage(store, restoredBytes);
     writeStore(store);
     notify();
   },
@@ -1049,23 +1092,30 @@ export const localDb = {
   restoreFileFolder(folderId) {
     const store = readStore();
     const folderIds = [folderId, ...getFolderDescendantIds(store.fileFolders, folderId)];
+    let restoredBytes = 0;
     store.fileFolders.forEach((item) => {
       if (folderIds.includes(item.id)) {
         item.deletedAt = "";
       }
     });
     store.fileAssets.forEach((item) => {
-      if (folderIds.includes(item.folderId || "")) {
+      if (folderIds.includes(item.folderId || "") && item.deletedAt) {
         item.deletedAt = "";
+        restoredBytes += Number(item.fileSizeBytes || 0);
       }
     });
+    adjustLocalDriveStorage(store, restoredBytes);
     writeStore(store);
     notify();
   },
 
   deleteFileAssets(assetIds) {
     const store = readStore();
+    const removedBytes = store.fileAssets
+      .filter((item) => assetIds.includes(item.id) && !item.deletedAt)
+      .reduce((total, item) => total + Number(item.fileSizeBytes || 0), 0);
     store.fileAssets = store.fileAssets.filter((item) => !assetIds.includes(item.id));
+    adjustLocalDriveStorage(store, -removedBytes);
     writeStore(store);
     notify();
   },
@@ -1073,8 +1123,12 @@ export const localDb = {
   deleteFileFolder(folderId) {
     const store = readStore();
     const folderIds = [folderId, ...getFolderDescendantIds(store.fileFolders, folderId)];
+    const removedBytes = store.fileAssets
+      .filter((item) => folderIds.includes(String(item.folderId || "")) && !item.deletedAt)
+      .reduce((total, item) => total + Number(item.fileSizeBytes || 0), 0);
     store.fileFolders = store.fileFolders.filter((item) => !folderIds.includes(item.id));
     store.fileAssets = store.fileAssets.filter((item) => !folderIds.includes(String(item.folderId || "")));
+    adjustLocalDriveStorage(store, -removedBytes);
     writeStore(store);
     notify();
   },
@@ -1088,6 +1142,31 @@ export const localDb = {
     writeStore(store);
     notify();
     return asset;
+  },
+
+  toggleFileAssetsDigitized(assetIds, digitized) {
+    const store = readStore();
+    const digitizedAt = digitized ? new Date().toISOString() : "";
+    store.fileAssets.forEach((item) => {
+      if (assetIds.includes(item.id)) {
+        item.digitized = Boolean(digitized);
+        item.digitizedAt = digitizedAt;
+      }
+    });
+    writeStore(store);
+    notify();
+  },
+
+  updateFileAssetsNotes(assetIds, notes) {
+    const store = readStore();
+    const normalizedNotes = String(notes || "").trim();
+    store.fileAssets.forEach((item) => {
+      if (assetIds.includes(item.id)) {
+        item.notes = normalizedNotes;
+      }
+    });
+    writeStore(store);
+    notify();
   },
 
   createAdvance(payload) {

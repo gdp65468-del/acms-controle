@@ -11,6 +11,7 @@ export function AppProvider({ children }) {
     history: [],
     fileFolders: [],
     fileAssets: [],
+    driveStats: { totalBytes: 0, status: "PENDING" },
     session: { currentUser: null, assistantUser: null }
   });
   const [loading, setLoading] = useState(true);

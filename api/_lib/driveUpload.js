@@ -1,6 +1,7 @@
 import { getAdminDb, Timestamp } from "./firebaseAdmin.js";
 import { createSignedToken, sha256, verifySignedToken } from "./security.js";
 import { uploadFileToCloudinary } from "./cloudinary.js";
+import { incrementDriveStorage } from "./driveStorage.js";
 
 const COLLECTIONS = {
   driveUploadSessions: "sessoes_upload_drive",
@@ -74,6 +75,7 @@ function mapAsset(docSnap) {
     originalFileName: data.originalFileName || "",
     fileType: data.fileType || "",
     mimeType: data.mimeType || "",
+    fileSizeBytes: Number(data.fileSizeBytes || 0),
     secureUrl: data.secureUrl || "",
     thumbnailUrl: data.thumbnailUrl || "",
     notes: data.notes || "",
@@ -237,6 +239,7 @@ export async function uploadDriveUploadAsset(sessionToken, sessionId, file, { ti
 
   const upload = await uploadFileToCloudinary(file, getDriveFolderName(folderPath));
   const fileType = String(file.mimetype || "").startsWith("image/") ? "image" : "pdf";
+  const fileSizeBytes = Math.max(0, Number(upload.bytes || file.size || 0));
 
   const record = {
     folderId,
@@ -244,6 +247,7 @@ export async function uploadDriveUploadAsset(sessionToken, sessionId, file, { ti
     originalFileName: file.originalFilename || normalizedTitle,
     fileType,
     mimeType: file.mimetype || "",
+    fileSizeBytes,
     cloudinaryPublicId: upload.public_id || "",
     secureUrl: upload.secure_url || "",
     thumbnailUrl: fileType === "image" ? upload.secure_url || "" : "",
@@ -259,6 +263,7 @@ export async function uploadDriveUploadAsset(sessionToken, sessionId, file, { ti
   };
 
   const docRef = await adminDb.collection(COLLECTIONS.fileAssets).add(record);
+  await incrementDriveStorage(adminDb, fileSizeBytes);
   await touchDriveUploadSessionPublic(sessionToken, sessionId);
   return {
     id: docRef.id,
@@ -308,6 +313,7 @@ export async function deleteDriveUploadAsset(sessionToken, sessionId, assetId) {
   }
 
   await ref.set({ deletedAt: new Date().toISOString() }, { merge: true });
+  await incrementDriveStorage(adminDb, -Number(data.fileSizeBytes || 0));
   await touchDriveUploadSessionPublic(sessionToken, sessionId);
   return true;
 }

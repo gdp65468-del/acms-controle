@@ -89,3 +89,23 @@ export async function prepareFileForUpload(file) {
     lastModified: file.lastModified
   });
 }
+
+export async function captureScannerFrame(video, captureId) {
+  if (!video?.videoWidth || !video?.videoHeight) {
+    throw new Error("A camera ainda nao esta pronta para fotografar.");
+  }
+
+  const maxDimension = 1800;
+  const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Nao foi possivel preparar a fotografia.");
+
+  // O frame de video ja vem orientado pelo navegador; o canvas grava os pixels nessa orientacao.
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await canvasToBlob(canvas, "image/jpeg", 0.88);
+  const fileName = `COMPROVANTE_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}_${captureId.slice(0, 8)}.jpg`;
+  return new File([blob], fileName, { type: "image/jpeg", lastModified: Date.now() });
+}
