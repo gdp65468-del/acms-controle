@@ -90,9 +90,23 @@ export async function prepareFileForUpload(file) {
   });
 }
 
-export async function captureScannerFrame(video, captureId) {
+export async function captureScannerFrame(video, captureId, options = {}) {
+  const { track, flash = false } = options;
   if (!video?.videoWidth || !video?.videoHeight) {
     throw new Error("A camera ainda nao esta pronta para fotografar.");
+  }
+
+  const fileName = `COMPROVANTE_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}_${captureId.slice(0, 8)}.jpg`;
+  if (flash && track && typeof ImageCapture !== "undefined") {
+    try {
+      const blob = await new ImageCapture(track).takePhoto({ fillLightMode: "flash" });
+      if (blob?.size) {
+        return new File([blob], fileName, { type: blob.type || "image/jpeg", lastModified: Date.now() });
+      }
+    } catch {
+      // Alguns navegadores exibem o flash nas capacidades, mas falham no takePhoto.
+      // Nesse caso, preservamos a captura do frame ao vivo abaixo.
+    }
   }
 
   const maxDimension = 1800;
@@ -106,6 +120,5 @@ export async function captureScannerFrame(video, captureId) {
   // O frame de video ja vem orientado pelo navegador; o canvas grava os pixels nessa orientacao.
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   const blob = await canvasToBlob(canvas, "image/jpeg", 0.88);
-  const fileName = `COMPROVANTE_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}_${captureId.slice(0, 8)}.jpg`;
   return new File([blob], fileName, { type: "image/jpeg", lastModified: Date.now() });
 }

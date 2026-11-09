@@ -33,6 +33,11 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   const [deviceId, setDeviceId] = useState("");
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [flashSupported, setFlashSupported] = useState(false);
+  const [flashOn, setFlashOn] = useState(false);
+  const [focusSupported, setFocusSupported] = useState(false);
+  const [focusPulse, setFocusPulse] = useState(false);
+  const focusResetTimerRef = useRef(null);
   const [review, setReview] = useState(null);
   const [lastPhotoUrl, setLastPhotoUrl] = useState("");
   const [captures, setCaptures] = useState([]);
@@ -85,6 +90,12 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setTorchOn(false);
+    setFlashOn(false);
+    setFocusSupported(false);
+    if (focusResetTimerRef.current) {
+      window.clearTimeout(focusResetTimerRef.current);
+      focusResetTimerRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -118,9 +129,25 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
         }
         const track = stream.getVideoTracks()[0];
         try {
-          setTorchSupported(Boolean(track?.getCapabilities?.()?.torch));
+          const capabilities = track?.getCapabilities?.() || {};
+          const focusModes = Array.isArray(capabilities.focusMode) ? capabilities.focusMode : [];
+          setTorchSupported(capabilities.torch === true || Array.isArray(capabilities.torch));
+          setFocusSupported(focusModes.includes("continuous") || focusModes.includes("single-shot"));
+          if (capabilities.torch === true || Array.isArray(capabilities.torch)) {
+            await track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+          }
+          if (focusModes.includes("continuous")) {
+            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+          }
+          if (typeof ImageCapture !== "undefined" && track) {
+            const photoCapabilities = await new ImageCapture(track).getPhotoCapabilities().catch(() => null);
+            const fillLightModes = photoCapabilities?.fillLightMode || [];
+            if (!cancelled) setFlashSupported(fillLightModes.includes("flash"));
+          }
         } catch {
           setTorchSupported(false);
+          setFlashSupported(false);
+          setFocusSupported(false);
         }
         try {
           const available = await navigator.mediaDevices.enumerateDevices();
@@ -183,7 +210,10 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     let pendingPhoto = null;
     try {
       const captureId = createCaptureId();
-      const file = await captureScannerFrame(videoRef.current, captureId);
+      const file = await captureScannerFrame(videoRef.current, captureId, {
+        track: streamRef.current?.getVideoTracks()[0],
+        flash: flashOn
+      });
       const photoUrl = rememberPhoto(file);
       pendingPhoto = { file, captureId, photoUrl, replaceAssetId: redoTargetId };
       setPhotographed((value) => value + 1);
@@ -235,15 +265,66 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     setNotice(removed ? "Ultima foto descartada. Fotografe novamente." : "Aguarde o envio terminar para refazer.");
   }
 
+  async function focusCenter() {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    setFocusPulse(true);
+    if (focusResetTimerRef.current) window.clearTimeout(focusResetTimerRef.current);
+    focusResetTimerRef.current = window.setTimeout(() => setFocusPulse(false), 650);
+
+    const capabilities = track.getCapabilities?.() || {};
+    const focusModes = Array.isArray(capabilities.focusMode) ? capabilities.focusMode : [];
+    if (!focusModes.length) {
+      setNotice("O foco por toque nao esta disponivel nesta camera.");
+      return;
+    }
+
+    try {
+      if (focusModes.includes("single-shot")) {
+        try {
+          await track.applyConstraints({ advanced: [{ focusMode: "single-shot", pointsOfInterest: { x: 0.5, y: 0.5 } }] });
+        } catch {
+          await track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
+        }
+      }
+      if (focusModes.includes("continuous")) {
+        if (focusResetTimerRef.current) window.clearTimeout(focusResetTimerRef.current);
+        focusResetTimerRef.current = window.setTimeout(() => {
+          void track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+          setFocusPulse(false);
+        }, 500);
+      }
+    } catch {
+      setNotice("Nao foi possivel ajustar o foco desta camera.");
+    }
+  }
+
   async function toggleTorch() {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return;
+    const capabilities = track.getCapabilities?.() || {};
+    const hasTorch = capabilities.torch === true || Array.isArray(capabilities.torch);
     try {
-      const next = !torchOn;
-      await track.applyConstraints({ advanced: [{ torch: next }] });
-      setTorchOn(next);
+      if (hasTorch) {
+        const next = !torchOn;
+        await track.applyConstraints({ advanced: [{ torch: next }] });
+        setTorchOn(next);
+        setFlashOn(false);
+        return;
+      }
+      if (flashSupported) {
+        setFlashOn((value) => !value);
+        setNotice(flashOn ? "Flash desativado." : "Flash sera usado na proxima foto.");
+        return;
+      }
+      throw new Error("unsupported-light");
     } catch {
-      setNotice("A lanterna nao esta disponivel nesta camera.");
+      if (flashSupported) {
+        setFlashOn((value) => !value);
+        setNotice(flashOn ? "Flash desativado." : "Flash sera usado na proxima foto.");
+      } else {
+        setNotice("O navegador nao liberou a lanterna ou o flash desta camera.");
+      }
     }
   }
 
@@ -283,13 +364,13 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
             <div className="quick-scanner-header-actions">
               <button
                 type="button"
-                className={`quick-scanner-torch${torchOn ? " is-active" : ""}`}
+                className={`quick-scanner-torch${torchOn || flashOn ? " is-active" : ""}`}
                 onClick={toggleTorch}
                 aria-label={torchOn ? "Desligar lanterna" : "Ligar lanterna"}
-                aria-pressed={torchOn}
-                title={torchSupported ? "Ligar lanterna do celular" : "Tentar ligar lanterna (se suportada)"}
+                aria-pressed={torchOn || flashOn}
+                title={torchSupported ? "Ligar lanterna do celular" : flashSupported ? "Usar flash na proxima foto" : "Tentar ligar lanterna ou flash"}
               >
-                <span aria-hidden="true">{torchOn ? "⚡" : "🔦"}</span>
+                <span aria-hidden="true">{torchOn || flashOn ? "⚡" : "🔦"}</span>
               </button>
               {/* Torch control stays visible on devices whose browser hides the capability flag. */}
               {false && (
@@ -302,7 +383,16 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
             </div>
           </header>
 
-          <main className="quick-scanner-viewfinder">
+          <main
+            className={`quick-scanner-viewfinder${focusPulse ? " is-focusing" : ""}`}
+            onClick={() => void focusCenter()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") void focusCenter();
+            }}
+            role="button"
+            tabIndex={0}
+            aria-label={focusSupported ? "Tocar no centro para focar" : "Previa da camera"}
+          >
             <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" />
             {cameraError ? <div className="quick-scanner-camera-error">{cameraError}</div> : null}
             <div className="quick-scanner-guides" aria-hidden="true"><i /><i /><i /><i /></div>
