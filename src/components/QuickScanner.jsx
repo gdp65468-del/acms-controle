@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { captureScannerFrame } from "../utils/fileAssets";
 import { getFocusPoint, requestScannerFocus, updateScannerCameraConstraints } from "../utils/scannerFocus";
-import { captureWithNativeCamera, isNativeAndroidApp } from "../utils/nativeCamera";
+import {
+  captureWithInlineNativeScanner,
+  captureWithNativeCamera,
+  hasInlineNativeScannerCamera,
+  isNativeAndroidApp,
+  setInlineNativeScannerTorch,
+  setInlineNativeScannerVisible,
+  setInlineNativeScannerZoom,
+  startInlineNativeScannerPreview,
+  stopInlineNativeScannerPreview,
+  updateInlineNativeScannerBounds
+} from "../utils/nativeCamera";
 import {
   discardQueuedScannerCapture,
   enqueueScannerCapture,
@@ -23,7 +34,9 @@ function createCaptureId() {
 
 export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose }) {
   const nativeCamera = isNativeAndroidApp();
+  const inlineNativeCamera = hasInlineNativeScannerCamera();
   const videoRef = useRef(null);
+  const viewfinderRef = useRef(null);
   const streamRef = useRef(null);
   const lastPhotoUrlRef = useRef("");
   const [cameraError, setCameraError] = useState("");
@@ -93,6 +106,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   }, [folderId, ownerUid, sessionId, uploader]);
 
   const stopCamera = useCallback(() => {
+    if (inlineNativeCamera) void stopInlineNativeScannerPreview().catch(() => {});
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -109,12 +123,59 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
       window.clearTimeout(focusResetTimerRef.current);
       focusResetTimerRef.current = null;
     }
-  }, []);
+  }, [inlineNativeCamera]);
 
   useEffect(() => {
     if (stage !== "camera") {
       stopCamera();
       return undefined;
+    }
+    if (inlineNativeCamera) {
+      let cancelled = false;
+      let observer = null;
+      const getBounds = () => {
+        const rect = viewfinderRef.current?.getBoundingClientRect();
+        if (!rect) return null;
+        return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, pixelRatio: window.devicePixelRatio || 1 };
+      };
+      const syncBounds = () => {
+        const bounds = getBounds();
+        if (bounds) void updateInlineNativeScannerBounds(bounds).catch(() => {});
+      };
+      const start = async () => {
+        const bounds = getBounds();
+        if (!bounds) return;
+        try {
+          const capabilities = await startInlineNativeScannerPreview(bounds);
+          if (cancelled) return;
+          const min = Number(capabilities.minZoom);
+          const max = Number(capabilities.maxZoom);
+          setCameraError("");
+          setDevices([]);
+          setTorchSupported(Boolean(capabilities.torchSupported));
+          setFlashSupported(false);
+          setFocusSupported(true);
+          setZoomRange(Number.isFinite(min) && Number.isFinite(max) && max > min ? { min, max, step: 0.1 } : null);
+          setZoomValue(Number(capabilities.zoom) || 1);
+        } catch (error) {
+          if (!cancelled) setCameraError(`Nao foi possivel abrir a camera: ${error?.message || "verifique a permissao"}.`);
+        }
+      };
+      const frame = window.requestAnimationFrame(() => void start());
+      if (typeof ResizeObserver !== "undefined" && viewfinderRef.current) {
+        observer = new ResizeObserver(syncBounds);
+        observer.observe(viewfinderRef.current);
+      }
+      window.addEventListener("resize", syncBounds);
+      window.visualViewport?.addEventListener("resize", syncBounds);
+      return () => {
+        cancelled = true;
+        window.cancelAnimationFrame(frame);
+        observer?.disconnect();
+        window.removeEventListener("resize", syncBounds);
+        window.visualViewport?.removeEventListener("resize", syncBounds);
+        stopCamera();
+      };
     }
     if (nativeCamera) {
       setCameraError("");
@@ -203,7 +264,12 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
       cancelled = true;
       stopCamera();
     };
-  }, [deviceId, nativeCamera, stage, stopCamera]);
+  }, [deviceId, inlineNativeCamera, nativeCamera, stage, stopCamera]);
+
+  useEffect(() => {
+    if (!inlineNativeCamera || stage !== "camera") return;
+    void setInlineNativeScannerVisible(!review).catch(() => {});
+  }, [inlineNativeCamera, review, stage]);
 
   useEffect(() => () => {
     if (lastPhotoUrlRef.current) URL.revokeObjectURL(lastPhotoUrlRef.current);
@@ -260,7 +326,9 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     let pendingPhoto = null;
     try {
       const captureId = createCaptureId();
-      const file = nativeCamera
+      const file = inlineNativeCamera
+        ? await captureWithInlineNativeScanner(captureId)
+        : nativeCamera
         ? await captureWithNativeCamera(captureId)
         : await captureScannerFrame(videoRef.current, captureId, {
           track: streamRef.current?.getVideoTracks()[0],
@@ -357,6 +425,20 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
 
   async function toggleTorch() {
     if (focusRequestRef.current || busy || review) return;
+    if (inlineNativeCamera) {
+      if (!torchSupported) {
+        setNotice("Esta camera nao possui lanterna.");
+        return;
+      }
+      try {
+        const next = !torchOn;
+        await setInlineNativeScannerTorch(next);
+        setTorchOn(next);
+      } catch {
+        setNotice("Nao foi possivel ligar a lanterna desta camera.");
+      }
+      return;
+    }
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return;
     const capabilities = track.getCapabilities?.() || {};
@@ -394,6 +476,17 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
 
   async function setCameraZoom(target) {
     if (focusRequestRef.current || busy || review) return;
+    if (inlineNativeCamera) {
+      if (!zoomRange) return;
+      const value = clampZoom(target);
+      try {
+        const result = await setInlineNativeScannerZoom(value);
+        setZoomValue(Number(result.zoom) || value);
+      } catch {
+        setNotice("Nao foi possivel mudar o zoom desta camera.");
+      }
+      return;
+    }
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track || !zoomRange) {
       setNotice("Esta camera nao disponibilizou zoom para o navegador.");
@@ -442,7 +535,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
               <span>📁 {folderPath || "Meu drive"}</span>
             </div>
             <div className="quick-scanner-header-actions">
-              {!nativeCamera && zoomRange ? (
+              {(!nativeCamera || inlineNativeCamera) && zoomRange ? (
                 <div className="quick-scanner-zoom" aria-label="Zoom da camera">
                   <button
                     type="button"
@@ -460,7 +553,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
                   >2x</button>
                 </div>
               ) : null}
-              {!nativeCamera ? <button
+              {(!nativeCamera || inlineNativeCamera) ? <button
                 type="button"
                 className={`quick-scanner-torch${torchOn || flashOn ? " is-active" : ""}`}
                 onClick={toggleTorch}
@@ -482,6 +575,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
           </header>
 
           <main
+            ref={viewfinderRef}
             className={`quick-scanner-viewfinder${focusPulse ? " is-focusing" : ""}`}
             onClick={(event) => {
               if (!nativeCamera) void focusAt(event);
@@ -496,11 +590,11 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
             tabIndex={nativeCamera ? undefined : 0}
             aria-label={nativeCamera ? "Camera nativa do Android" : focusSupported ? "Toque no texto do recibo para solicitar foco" : "Previa da camera"}
           >
-            {nativeCamera ? <div className="quick-scanner-native-camera">
+            {nativeCamera && !inlineNativeCamera ? <div className="quick-scanner-native-camera">
               <span aria-hidden="true">📷</span>
               <strong>Câmera nativa do celular</strong>
               <p>Toque no botão para abrir a câmera Samsung. Use as lentes, o foco por toque e a lanterna do próprio celular.</p>
-            </div> : <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" />}
+            </div> : !inlineNativeCamera ? <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" /> : <div className="quick-scanner-native-loading" aria-hidden="true" />}
             {cameraError ? <div className="quick-scanner-camera-error">{cameraError}</div> : null}
             {!nativeCamera ? <><div className="quick-scanner-guides" aria-hidden="true"><i /><i /><i /><i /></div>
               <span className="quick-scanner-focus-point" aria-hidden="true" style={{ left: `${focusPoint.x * 100}%`, top: `${focusPoint.y * 100}%` }} /></> : null}
