@@ -160,7 +160,7 @@ public class NativeScannerCameraPlugin extends Plugin {
     @PluginMethod
     public void stopPreview(PluginCall call) {
         getActivity().runOnUiThread(() -> {
-            stopCameraInternal(false);
+            stopCameraInternal(true);
             call.resolve();
         });
     }
