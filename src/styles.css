@@ -1423,8 +1423,8 @@ a {
 .quick-scanner-guides i:nth-child(4) { bottom: 0; right: 0; border-width: 0 4px 4px 0; border-radius: 0 0 8px 0; }
 
 .quick-scanner-viewfinder:focus-visible { outline: 2px solid #8ac2ff; outline-offset: -2px; }
-.quick-scanner-guides::after {
-  content: "";
+.quick-scanner-focus-point {
+  pointer-events: none;
   position: absolute;
   top: 50%;
   left: 50%;
@@ -1436,7 +1436,7 @@ a {
   transform: translate(-50%, -50%);
   transition: width 160ms ease, height 160ms ease, opacity 160ms ease;
 }
-.quick-scanner-viewfinder.is-focusing .quick-scanner-guides::after {
+.quick-scanner-viewfinder.is-focusing .quick-scanner-focus-point {
   width: 58px;
   height: 58px;
   opacity: 1;

@@ -1,5 +1,14 @@
 # Scanner Rápido ACMS Drive — transferência para a Etapa 2
 
+## Ajuste de foco para recibos — 09/11/2026
+
+- `src/utils/scannerFocus.js` solicita foco contínuo, ou single-shot quando for a única opção automática. O pedido mantém as constraints de resolução, lanterna e zoom. Alterar zoom/lanterna também preserva o foco.
+- O toque usa a posição do texto no vídeo, compensando `object-fit: cover`, com `pointsOfInterest: [{x, y}]` normalizados. Só solicita o ponto quando o navegador declara suporte. Se o ponto for rejeitado, tenta apenas autofocus; informa essa limitação na interface.
+- O indicador mostra uma solicitação, nunca confirmação de nitidez. Depois da aplicação há 800 ms de estabilização antes de liberar o obturador. Não há evento web confiável de foco concluído; o usuário ainda deve conferir a nitidez. Pedido sem resposta libera a captura após 3 segundos.
+- Troca de câmera/finalização invalida o pedido pendente e limpa o temporizador. Conferência não altera foco. Removido o temporizador que alternava single-shot para contínuo após 500 ms.
+- `test/scannerFocus.test.mjs` testa geometria, preservação de ajustes, câmeras sem suporte, fallback, rejeições e tracks encerrados com câmeras simuladas. Não valida foco óptico em aparelho físico.
+- Homologar no S24 via HTTPS: texto miúdo e códigos de barras, toques fora do centro, 1x/2x, lanterna, captura após toque e troca/fechamento durante tentativa de foco. Verificar o arquivo salvo além da prévia; processamento e compressão continuam os existentes. Alguns navegadores não expõem foco/ponto de interesse, e nenhuma opção web força suporte nem supera a distância mínima da lente.
+
 ## Escopo implementado
 
 O Scanner Rápido é aberto pelo menu **Criar ou carregar** em `/arquivos`. Ele recebe `currentFolderId`, `currentPath` e o usuário autenticado da `FilesPage`; portanto, cada captura usa a pasta que estava aberta. O acesso continua protegido pela rota e pelo fluxo de tesoureiro já existentes. Nenhuma regra de autenticação ou credencial foi adicionada ao frontend.

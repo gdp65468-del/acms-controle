@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { captureScannerFrame } from "../utils/fileAssets";
+import { getFocusPoint, requestScannerFocus, updateScannerCameraConstraints } from "../utils/scannerFocus";
 import {
   discardQueuedScannerCapture,
   enqueueScannerCapture,
@@ -37,6 +38,8 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   const [flashOn, setFlashOn] = useState(false);
   const [focusSupported, setFocusSupported] = useState(false);
   const [focusPulse, setFocusPulse] = useState(false);
+  const [focusPoint, setFocusPoint] = useState({ x: 0.5, y: 0.5 });
+  const focusRequestRef = useRef(null);
   const [zoomRange, setZoomRange] = useState(null);
   const [zoomValue, setZoomValue] = useState(null);
   const focusResetTimerRef = useRef(null);
@@ -94,6 +97,10 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     setTorchOn(false);
     setFlashOn(false);
     setFocusSupported(false);
+    focusRequestRef.current = null;
+    setFocusPulse(false);
+    setTorchSupported(false);
+    setFlashSupported(false);
     setZoomRange(null);
     setZoomValue(null);
     if (focusResetTimerRef.current) {
@@ -131,6 +138,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
+        if (cancelled) return;
         const track = stream.getVideoTracks()[0];
         try {
           const capabilities = track?.getCapabilities?.() || {};
@@ -147,7 +155,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
             await track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
           }
           if (focusModes.includes("continuous")) {
-            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+            await requestScannerFocus(track).catch(() => {});
           }
           if (typeof ImageCapture !== "undefined" && track) {
             const photoCapabilities = await new ImageCapture(track).getPhotoCapabilities().catch(() => null);
@@ -216,7 +224,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   }
 
   async function takePhoto() {
-    if (busy || stage !== "camera" || review) return;
+    if (busy || focusRequestRef.current || stage !== "camera" || review) return;
     setBusy(true);
     setNotice("");
     let pendingPhoto = null;
@@ -277,41 +285,46 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     setNotice(removed ? "Ultima foto descartada. Fotografe novamente." : "Aguarde o envio terminar para refazer.");
   }
 
-  async function focusCenter() {
+  async function focusAt(event) {
     const track = streamRef.current?.getVideoTracks()[0];
-    if (!track) return;
-    setFocusPulse(true);
-    if (focusResetTimerRef.current) window.clearTimeout(focusResetTimerRef.current);
-    focusResetTimerRef.current = window.setTimeout(() => setFocusPulse(false), 650);
-
-    const capabilities = track.getCapabilities?.() || {};
-    const focusModes = Array.isArray(capabilities.focusMode) ? capabilities.focusMode : [];
-    if (!focusModes.length) {
-      setNotice("O foco por toque nao esta disponivel nesta camera.");
-      return;
-    }
-
+    if (!track || review || busy || focusRequestRef.current) return;
+    const video = videoRef.current;
+    const rect = video.getBoundingClientRect();
+    const { display, sensor } = getFocusPoint(rect, video.videoWidth, video.videoHeight,
+      event?.detail ? event.clientX : rect.left + rect.width / 2,
+      event?.detail ? event.clientY : rect.top + rect.height / 2);
+    const request = {};
+    focusRequestRef.current = request;
+    const isCurrent = () => focusRequestRef.current === request && streamRef.current?.getVideoTracks()[0] === track;
+    const release = () => {
+      if (!isCurrent()) return;
+      focusRequestRef.current = null;
+      setFocusPulse(false);
+    };
+    // A stuck device request must not indefinitely disable capture.
+    focusResetTimerRef.current = window.setTimeout(release, 3000);
     try {
-      if (focusModes.includes("single-shot")) {
-        try {
-          await track.applyConstraints({ advanced: [{ focusMode: "single-shot", pointsOfInterest: { x: 0.5, y: 0.5 } }] });
-        } catch {
-          await track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
-        }
+      const result = await requestScannerFocus(track, sensor, navigator.mediaDevices.getSupportedConstraints?.() || {});
+      if (!isCurrent()) return;
+      if (!result.supported) {
+        setNotice("Esta camera nao permite ajustar o foco pelo site. Afaste um pouco o celular e mantenha o recibo bem iluminado.");
+        release();
+        return;
       }
-      if (focusModes.includes("continuous")) {
-        if (focusResetTimerRef.current) window.clearTimeout(focusResetTimerRef.current);
-        focusResetTimerRef.current = window.setTimeout(() => {
-          void track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
-          setFocusPulse(false);
-        }, 500);
-      }
+      setFocusPoint(result.pointRequested ? display : { x: 0.5, y: 0.5 });
+      setFocusPulse(true);
+      setNotice(result.pointRequested ? "Foco solicitado neste ponto. Mantenha o celular parado." : "Foco automatico solicitado. Esta camera nao permite escolher o ponto; aguarde o texto ficar nitido.");
+      window.clearTimeout(focusResetTimerRef.current);
+      // Settling allowance, not confirmation that the physical lens has focused.
+      focusResetTimerRef.current = window.setTimeout(release, 800);
     } catch {
-      setNotice("Nao foi possivel ajustar o foco desta camera.");
+      if (isCurrent()) setNotice("Nao foi possivel ajustar o foco. Afaste um pouco o celular e tente novamente.");
+      release();
     }
   }
 
   async function toggleTorch() {
+    if (focusRequestRef.current || busy || review) return;
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return;
     const capabilities = track.getCapabilities?.() || {};
@@ -319,7 +332,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     try {
       if (hasTorch) {
         const next = !torchOn;
-        await track.applyConstraints({ advanced: [{ torch: next }] });
+        await updateScannerCameraConstraints(track, { torch: next });
         setTorchOn(next);
         setFlashOn(false);
         return;
@@ -348,6 +361,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   }
 
   async function setCameraZoom(target) {
+    if (focusRequestRef.current || busy || review) return;
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track || !zoomRange) {
       setNotice("Esta camera nao disponibilizou zoom para o navegador.");
@@ -355,7 +369,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     }
     const value = clampZoom(target);
     try {
-      await track.applyConstraints({ advanced: [{ zoom: value }] });
+      await updateScannerCameraConstraints(track, { zoom: value });
       setZoomValue(value);
     } catch {
       setNotice("Nao foi possivel mudar a lente/zoom desta camera.");
@@ -430,24 +444,28 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
                   {torchOn ? "⚡" : "♧"}
                 </button>
               )}
-              {devices.length > 1 ? <button type="button" onClick={switchCamera} aria-label="Trocar camera">⟳</button> : null}
+              {devices.length > 1 ? <button type="button" onClick={switchCamera} disabled={busy || Boolean(review)} aria-label="Trocar camera">⟳</button> : null}
               <button type="button" className="quick-scanner-finish" onClick={finish}>Finalizar</button>
             </div>
           </header>
 
           <main
             className={`quick-scanner-viewfinder${focusPulse ? " is-focusing" : ""}`}
-            onClick={() => void focusCenter()}
+            onClick={(event) => void focusAt(event)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") void focusCenter();
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                void focusAt();
+              }
             }}
             role="button"
             tabIndex={0}
-            aria-label={focusSupported ? "Tocar no centro para focar" : "Previa da camera"}
+            aria-label={focusSupported ? "Toque no texto do recibo para solicitar foco" : "Previa da camera"}
           >
             <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" />
             {cameraError ? <div className="quick-scanner-camera-error">{cameraError}</div> : null}
             <div className="quick-scanner-guides" aria-hidden="true"><i /><i /><i /><i /></div>
+            <span className="quick-scanner-focus-point" aria-hidden="true" style={{ left: `${focusPoint.x * 100}%`, top: `${focusPoint.y * 100}%` }} />
             {review ? (
               <div className="quick-scanner-review">
                 <img src={review.photoUrl} alt="Fotografia para conferencia" />
@@ -472,7 +490,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
                 type="button"
                 className="quick-scanner-shutter"
                 onClick={takePhoto}
-                disabled={busy || Boolean(review) || Boolean(cameraError) || !queueReady}
+                disabled={busy || focusPulse || Boolean(review) || Boolean(cameraError) || !queueReady}
                 aria-label="Fotografar comprovante"
               ><span /></button>
               <button type="button" className="quick-scanner-redo" onClick={redoLast} disabled={!lastCapture}>⟲<small>Refazer</small></button>
