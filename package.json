@@ -11,13 +11,16 @@
   },
   "dependencies": {
     "firebase": "^11.5.0",
-    "firebase-admin": "^13.10.0",
+    "firebase-admin": "13.7.0",
     "formidable": "^3.5.4",
     "jszip": "^3.10.2",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.18.5"
+  },
+  "overrides": {
+    "@firebase/database-compat": "2.0.11"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
