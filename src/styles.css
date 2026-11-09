@@ -1352,6 +1352,34 @@ a {
   font-size: 1.2rem;
 }
 
+.quick-scanner-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.quick-scanner-header-actions .quick-scanner-zoom button {
+  min-width: 34px;
+  padding: 5px 6px;
+  border-radius: 999px;
+  color: #d9eaff;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.quick-scanner-header-actions .quick-scanner-zoom button.is-active {
+  background: #0968ff;
+  color: #fff;
+}
+
+.quick-scanner-header-actions .quick-scanner-zoom button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .quick-scanner-header-actions .quick-scanner-finish {
   font-size: 0.86rem;
   font-weight: 800;

@@ -37,6 +37,8 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
   const [flashOn, setFlashOn] = useState(false);
   const [focusSupported, setFocusSupported] = useState(false);
   const [focusPulse, setFocusPulse] = useState(false);
+  const [zoomRange, setZoomRange] = useState(null);
+  const [zoomValue, setZoomValue] = useState(null);
   const focusResetTimerRef = useRef(null);
   const [review, setReview] = useState(null);
   const [lastPhotoUrl, setLastPhotoUrl] = useState("");
@@ -92,6 +94,8 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     setTorchOn(false);
     setFlashOn(false);
     setFocusSupported(false);
+    setZoomRange(null);
+    setZoomValue(null);
     if (focusResetTimerRef.current) {
       window.clearTimeout(focusResetTimerRef.current);
       focusResetTimerRef.current = null;
@@ -131,8 +135,14 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
         try {
           const capabilities = track?.getCapabilities?.() || {};
           const focusModes = Array.isArray(capabilities.focusMode) ? capabilities.focusMode : [];
+          const zoom = capabilities.zoom;
+          const nextZoomRange = zoom && Number.isFinite(zoom.min) && Number.isFinite(zoom.max) && zoom.max > zoom.min
+            ? { min: zoom.min, max: zoom.max, step: Number.isFinite(zoom.step) && zoom.step > 0 ? zoom.step : 0.1 }
+            : null;
           setTorchSupported(capabilities.torch === true || Array.isArray(capabilities.torch));
           setFocusSupported(focusModes.includes("continuous") || focusModes.includes("single-shot"));
+          setZoomRange(nextZoomRange);
+          setZoomValue(nextZoomRange ? Number(track.getSettings?.().zoom) || 1 : null);
           if (capabilities.torch === true || Array.isArray(capabilities.torch)) {
             await track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
           }
@@ -148,6 +158,8 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
           setTorchSupported(false);
           setFlashSupported(false);
           setFocusSupported(false);
+          setZoomRange(null);
+          setZoomValue(null);
         }
         try {
           const available = await navigator.mediaDevices.enumerateDevices();
@@ -328,6 +340,28 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     }
   }
 
+  function clampZoom(value) {
+    if (!zoomRange) return value;
+    const clamped = Math.min(zoomRange.max, Math.max(zoomRange.min, value));
+    const steps = Math.round((clamped - zoomRange.min) / zoomRange.step);
+    return Number((zoomRange.min + steps * zoomRange.step).toFixed(2));
+  }
+
+  async function setCameraZoom(target) {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track || !zoomRange) {
+      setNotice("Esta camera nao disponibilizou zoom para o navegador.");
+      return;
+    }
+    const value = clampZoom(target);
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: value }] });
+      setZoomValue(value);
+    } catch {
+      setNotice("Nao foi possivel mudar a lente/zoom desta camera.");
+    }
+  }
+
   function switchCamera() {
     if (devices.length < 2) return;
     const currentId = deviceId || streamRef.current?.getVideoTracks()[0]?.getSettings?.().deviceId;
@@ -362,6 +396,24 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
               <span>📁 {folderPath || "Meu drive"}</span>
             </div>
             <div className="quick-scanner-header-actions">
+              {zoomRange ? (
+                <div className="quick-scanner-zoom" aria-label="Zoom da camera">
+                  <button
+                    type="button"
+                    className={Math.abs((zoomValue || 1) - 1) < zoomRange.step / 2 ? "is-active" : ""}
+                    onClick={() => void setCameraZoom(1)}
+                    disabled={zoomRange.min > 1 || zoomRange.max < 1}
+                    aria-label="Usar zoom 1x"
+                  >1x</button>
+                  <button
+                    type="button"
+                    className={Math.abs((zoomValue || 1) - 2) < zoomRange.step / 2 ? "is-active" : ""}
+                    onClick={() => void setCameraZoom(2)}
+                    disabled={zoomRange.min > 2 || zoomRange.max < 2}
+                    aria-label="Usar zoom 2x"
+                  >2x</button>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className={`quick-scanner-torch${torchOn || flashOn ? " is-active" : ""}`}
