@@ -19,6 +19,7 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, firebaseEnabled, googleProvider, storage } from "../firebase";
+import { isNativeAndroidApp, signInWithNativeGoogle, signOutFromNativeGoogle } from "../utils/nativeAuth";
 import { cloudinaryEnabled, cloudinaryUploadPreset, getCloudinaryUploadUrl } from "../cloudinary";
 import { localDb } from "./localDb";
 import { computeAdvanceStatus, computeDueDate } from "../utils/format";
@@ -741,7 +742,9 @@ export const appService = {
     if (!firebaseEnabled) {
       return localDb.signInTreasurer();
     }
-    const result = await signInWithPopup(auth, googleProvider);
+    const result = isNativeAndroidApp()
+      ? await signInWithNativeGoogle(auth)
+      : await signInWithPopup(auth, googleProvider);
     const byUid = await getDoc(doc(db, COLLECTIONS.users, result.user.uid));
     if (byUid.exists() && byUid.data()?.role === "treasurer") {
       return result.user;
@@ -756,7 +759,11 @@ export const appService = {
       }
     }
 
-    await signOut(auth);
+    if (isNativeAndroidApp()) {
+      await signOutFromNativeGoogle(auth);
+    } else {
+      await signOut(auth);
+    }
     throw new Error("Sua conta Google nao esta aprovada para usar a area da tesouraria.");
   },
 
@@ -765,7 +772,11 @@ export const appService = {
       localDb.signOutTreasurer();
       return;
     }
-    await signOut(auth);
+    if (isNativeAndroidApp()) {
+      await signOutFromNativeGoogle(auth);
+    } else {
+      await signOut(auth);
+    }
   },
 
   async createMember(payload) {

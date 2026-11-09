@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, indexedDBLocalPersistence, initializeAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { Capacitor } from "@capacitor/core";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -21,7 +22,14 @@ let storage;
 
 if (firebaseEnabled) {
   app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
+  try {
+    auth = Capacitor.isNativePlatform()
+      ? initializeAuth(app, { persistence: indexedDBLocalPersistence })
+      : getAuth(app);
+  } catch {
+    // initializeAuth can only be called once; preserve the existing Firebase auth instance.
+    auth = getAuth(app);
+  }
   db = getFirestore(app);
   storage = getStorage(app);
 }
