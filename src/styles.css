@@ -1403,6 +1403,20 @@ a {
   object-fit: cover;
 }
 
+.quick-scanner-native-camera {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 28px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 35%, #164d7f, #031221 68%);
+}
+
+.quick-scanner-native-camera span { font-size: 3rem; }
+.quick-scanner-native-camera strong { font-size: 1.1rem; }
+.quick-scanner-native-camera p { max-width: 300px; margin: 0; color: #c6e2ff; font-size: 0.9rem; }
+
 .quick-scanner-guides {
   pointer-events: none;
   position: absolute;

@@ -1,5 +1,22 @@
 # Scanner Rápido ACMS Drive — transferência para a Etapa 2
 
+## Atualizacao Android nativo - APK de teste
+
+- Foi adicionado um projeto Capacitor Android em `android/`, com identificador `com.acmscontrole.mobile` e Android minimo 7.0 (API 24).
+- O arquivo `capacitor.config.ts` aponta para `https://acms-controle.vercel.app`. Portanto, o APK e online: ele usa o login Firebase, as APIs e os mesmos dados da versao publicada, sem incluir credenciais no app.
+- Em Android, `src/utils/nativeCamera.js` chama `@capacitor/camera`. O plugin abre a camera nativa do aparelho para cada captura e devolve a foto ao Scanner Rapido, que preserva a fila IndexedDB e o upload existente para Cloudinary/Firestore.
+- A camera Samsung, e nao a WebView, passa a controlar foco por toque, autofocus, lentes/zoom e lanterna. O modo continuo continua no Scanner: apos confirmar na camera nativa, a foto e enfileirada e o botao permite abrir a proxima captura.
+- O service worker PWA nao e registrado dentro do APK, evitando interferencia com a ponte nativa do Capacitor.
+- Comandos: `npm run android:sync` atualiza o modulo Android; `npm run android:apk` gera o APK debug em `android/app/build/outputs/apk/debug/app-debug.apk`.
+- Validacao local: build web aprovado, `npm test` aprovado e `assembleDebug` aprovado com Java 21. O APK foi inspecionado com `aapt`: pacote correto, minSdk 24, targetSdk 36 e permissao apenas de Internet. A assinatura e a debug padrao; ela serve para instalar e homologar, nao para publicar na Play Store.
+
+### Homologacao pendente no S24
+
+1. Instalar o APK e abrir com Internet ativa; confirmar login, pagina Arquivos e scanner.
+2. No Scanner Rapido, tocar no obturador: a Camera Samsung deve abrir. Testar foco por toque, 1x/2x/lentes oferecidas pelo aparelho, lanterna e tirar uma foto.
+3. Ao voltar ao ACMS, confirmar miniatura, fila, upload e o arquivo na pasta atual. Testar uma sequencia de fotos e modo Conferencia.
+4. O aplicativo depende da Vercel estar atualizada, pois foi configurado como app online. A primeira abertura requer rede; fotos pendentes continuam usando a fila local existente apos a captura retornar ao app.
+
 ## Ajuste de foco para recibos — 09/11/2026
 
 - `src/utils/scannerFocus.js` solicita foco contínuo, ou single-shot quando for a única opção automática. O pedido mantém as constraints de resolução, lanterna e zoom. Alterar zoom/lanterna também preserva o foco.

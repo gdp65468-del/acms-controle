@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { captureScannerFrame } from "../utils/fileAssets";
 import { getFocusPoint, requestScannerFocus, updateScannerCameraConstraints } from "../utils/scannerFocus";
+import { captureWithNativeCamera, isNativeAndroidApp } from "../utils/nativeCamera";
 import {
   discardQueuedScannerCapture,
   enqueueScannerCapture,
@@ -21,6 +22,7 @@ function createCaptureId() {
 }
 
 export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose }) {
+  const nativeCamera = isNativeAndroidApp();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const lastPhotoUrlRef = useRef("");
@@ -114,6 +116,16 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
       stopCamera();
       return undefined;
     }
+    if (nativeCamera) {
+      setCameraError("");
+      setDevices([]);
+      setTorchSupported(false);
+      setFlashSupported(false);
+      setFocusSupported(false);
+      setZoomRange(null);
+      setZoomValue(null);
+      return undefined;
+    }
     let cancelled = false;
     async function startCamera() {
       stopCamera();
@@ -191,7 +203,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
       cancelled = true;
       stopCamera();
     };
-  }, [deviceId, stage, stopCamera]);
+  }, [deviceId, nativeCamera, stage, stopCamera]);
 
   useEffect(() => () => {
     if (lastPhotoUrlRef.current) URL.revokeObjectURL(lastPhotoUrlRef.current);
@@ -248,10 +260,12 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
     let pendingPhoto = null;
     try {
       const captureId = createCaptureId();
-      const file = await captureScannerFrame(videoRef.current, captureId, {
-        track: streamRef.current?.getVideoTracks()[0],
-        flash: flashOn
-      });
+      const file = nativeCamera
+        ? await captureWithNativeCamera(captureId)
+        : await captureScannerFrame(videoRef.current, captureId, {
+          track: streamRef.current?.getVideoTracks()[0],
+          flash: flashOn
+        });
       const photoUrl = rememberPhoto(file);
       pendingPhoto = { file, captureId, photoUrl, replaceAssetId: redoTargetId };
       setPhotographed((value) => value + 1);
@@ -428,7 +442,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
               <span>📁 {folderPath || "Meu drive"}</span>
             </div>
             <div className="quick-scanner-header-actions">
-              {zoomRange ? (
+              {!nativeCamera && zoomRange ? (
                 <div className="quick-scanner-zoom" aria-label="Zoom da camera">
                   <button
                     type="button"
@@ -446,7 +460,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
                   >2x</button>
                 </div>
               ) : null}
-              <button
+              {!nativeCamera ? <button
                 type="button"
                 className={`quick-scanner-torch${torchOn || flashOn ? " is-active" : ""}`}
                 onClick={toggleTorch}
@@ -455,35 +469,41 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
                 title={torchSupported ? "Ligar lanterna do celular" : flashSupported ? "Usar flash na proxima foto" : "Tentar ligar lanterna ou flash"}
               >
                 <span aria-hidden="true">{torchOn || flashOn ? "⚡" : "🔦"}</span>
-              </button>
+              </button> : null}
               {/* Torch control stays visible on devices whose browser hides the capability flag. */}
               {false && (
                 <button type="button" onClick={toggleTorch} aria-label={torchOn ? "Desligar lanterna" : "Ligar lanterna"}>
                   {torchOn ? "⚡" : "♧"}
                 </button>
               )}
-              {devices.length > 1 ? <button type="button" onClick={switchCamera} disabled={busy || Boolean(review)} aria-label="Trocar camera">⟳</button> : null}
+              {!nativeCamera && devices.length > 1 ? <button type="button" onClick={switchCamera} disabled={busy || Boolean(review)} aria-label="Trocar camera">⟳</button> : null}
               <button type="button" className="quick-scanner-finish" onClick={finish}>Finalizar</button>
             </div>
           </header>
 
           <main
             className={`quick-scanner-viewfinder${focusPulse ? " is-focusing" : ""}`}
-            onClick={(event) => void focusAt(event)}
+            onClick={(event) => {
+              if (!nativeCamera) void focusAt(event);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                void focusAt();
+                if (!nativeCamera) void focusAt();
               }
             }}
-            role="button"
-            tabIndex={0}
-            aria-label={focusSupported ? "Toque no texto do recibo para solicitar foco" : "Previa da camera"}
+            role={nativeCamera ? undefined : "button"}
+            tabIndex={nativeCamera ? undefined : 0}
+            aria-label={nativeCamera ? "Camera nativa do Android" : focusSupported ? "Toque no texto do recibo para solicitar foco" : "Previa da camera"}
           >
-            <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" />
+            {nativeCamera ? <div className="quick-scanner-native-camera">
+              <span aria-hidden="true">📷</span>
+              <strong>Câmera nativa do celular</strong>
+              <p>Toque no botão para abrir a câmera Samsung. Use as lentes, o foco por toque e a lanterna do próprio celular.</p>
+            </div> : <video ref={videoRef} autoPlay muted playsInline aria-label="Previa ao vivo da camera" />}
             {cameraError ? <div className="quick-scanner-camera-error">{cameraError}</div> : null}
-            <div className="quick-scanner-guides" aria-hidden="true"><i /><i /><i /><i /></div>
-            <span className="quick-scanner-focus-point" aria-hidden="true" style={{ left: `${focusPoint.x * 100}%`, top: `${focusPoint.y * 100}%` }} />
+            {!nativeCamera ? <><div className="quick-scanner-guides" aria-hidden="true"><i /><i /><i /><i /></div>
+              <span className="quick-scanner-focus-point" aria-hidden="true" style={{ left: `${focusPoint.x * 100}%`, top: `${focusPoint.y * 100}%` }} /></> : null}
             {review ? (
               <div className="quick-scanner-review">
                 <img src={review.photoUrl} alt="Fotografia para conferencia" />

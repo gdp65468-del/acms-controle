@@ -4,10 +4,13 @@ import { BrowserRouter } from "react-router-dom";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./styles.css";
+import { isNativeAndroidApp } from "./utils/nativeCamera";
 
 let refreshing = false;
 
-if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+const nativeAndroid = isNativeAndroidApp();
+
+if (!nativeAndroid && typeof window !== "undefined" && "serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (refreshing) return;
     refreshing = true;
@@ -15,7 +18,7 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   });
 }
 
-const updateSW = registerSW({
+const updateSW = !nativeAndroid ? registerSW({
   immediate: true,
   onRegisteredSW(_, registration) {
     if (!registration || typeof window === "undefined") return;
@@ -31,7 +34,7 @@ const updateSW = registerSW({
   onNeedRefresh() {
     updateSW(true);
   }
-});
+}) : () => {};
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
