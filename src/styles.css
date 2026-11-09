@@ -1284,12 +1284,12 @@ a {
   position: fixed;
   z-index: 200;
   inset: 0;
-  height: 100dvh;
   background: #061728;
   color: #fff;
   display: grid;
   place-items: center;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .quick-scanner-layout {
@@ -1493,6 +1493,14 @@ a {
   gap: 6px;
   padding: 8px 14px 12px;
   background: #041523;
+}
+
+.quick-scanner-document-tip {
+  margin: 0;
+  color: #b7d9ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
 }
 
 .quick-scanner-torch {

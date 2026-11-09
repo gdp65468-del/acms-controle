@@ -149,8 +149,15 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
             : null;
           setTorchSupported(capabilities.torch === true || Array.isArray(capabilities.torch));
           setFocusSupported(focusModes.includes("continuous") || focusModes.includes("single-shot"));
+          let initialZoom = nextZoomRange ? Number(track.getSettings?.().zoom) || 1 : null;
+          // Recibos costumam ser fotografados de perto. A lente 1x é a mais
+          // adequada para essa distância e evita começar em uma teleobjetiva.
+          if (nextZoomRange && nextZoomRange.min <= 1 && nextZoomRange.max >= 1 && Math.abs(initialZoom - 1) >= nextZoomRange.step / 2) {
+            await updateScannerCameraConstraints(track, { zoom: 1 }).catch(() => {});
+            initialZoom = Number(track.getSettings?.().zoom) || 1;
+          }
           setZoomRange(nextZoomRange);
-          setZoomValue(nextZoomRange ? Number(track.getSettings?.().zoom) || 1 : null);
+          setZoomValue(initialZoom);
           if (capabilities.torch === true || Array.isArray(capabilities.torch)) {
             await track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
           }
@@ -188,6 +195,17 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
 
   useEffect(() => () => {
     if (lastPhotoUrlRef.current) URL.revokeObjectURL(lastPhotoUrlRef.current);
+  }, []);
+
+  useEffect(() => {
+    const bodyOverflow = document.body.style.overflow;
+    const htmlOverscroll = document.documentElement.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = bodyOverflow;
+      document.documentElement.style.overscrollBehavior = htmlOverscroll;
+    };
   }, []);
 
   const counts = useMemo(() => ({
@@ -478,6 +496,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
               <button type="button" className={mode === "continuous" ? "is-active" : ""} onClick={() => setMode("continuous")}>∞ Contínuo</button>
               <button type="button" className={mode === "review" ? "is-active" : ""} onClick={() => setMode("review")}>☑ Conferência</button>
             </div>
+            {zoomRange && zoomValue >= 1.75 ? <p className="quick-scanner-document-tip">2x: afaste o celular. Para recibos próximos, use 1x.</p> : null}
             {review ? <div className="quick-scanner-review-actions">
               <button type="button" onClick={redoLast}>Refazer</button>
               <button type="button" onClick={continueReview} disabled={busy}>Continuar e enviar</button>
