@@ -1295,11 +1295,13 @@ a {
 .quick-scanner-layout {
   width: min(100%, 640px);
   height: 100%;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(180deg, #092846, #041523);
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
+  overflow: hidden;
 }
 
 .quick-scanner-header {
@@ -1358,6 +1360,7 @@ a {
 
 .quick-scanner-viewfinder {
   position: relative;
+  flex: 1 1 auto;
   min-height: 0;
   margin: 0 10px;
   overflow: hidden;
@@ -1434,10 +1437,26 @@ a {
 }
 
 .quick-scanner-controls {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
   display: grid;
   justify-items: center;
   gap: 6px;
   padding: 8px 14px 12px;
+  background: #041523;
+}
+
+.quick-scanner-torch {
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.quick-scanner-torch.is-active {
+  background: #ffc107 !important;
+  color: #092247 !important;
 }
 
 .quick-scanner-modes {
@@ -1554,7 +1573,7 @@ a {
 
 @media (max-height: 680px) {
   .quick-scanner-header { min-height: 54px; }
-  .quick-scanner-controls { gap: 3px; padding: 5px 10px; }
+  .quick-scanner-controls { gap: 3px; padding: 5px 10px max(8px, env(safe-area-inset-bottom)); }
   .quick-scanner-shutter { width: 58px; height: 58px; }
   .quick-scanner-shutter span { width: 42px; height: 42px; }
   .quick-scanner-thumbnail { width: 44px; height: 44px; }

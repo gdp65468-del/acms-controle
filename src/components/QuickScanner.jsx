@@ -237,7 +237,7 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
 
   async function toggleTorch() {
     const track = streamRef.current?.getVideoTracks()[0];
-    if (!track || !torchSupported) return;
+    if (!track) return;
     try {
       const next = !torchOn;
       await track.applyConstraints({ advanced: [{ torch: next }] });
@@ -281,11 +281,22 @@ export function QuickScanner({ folderId, folderPath, ownerUid, actions, onClose 
               <span>📁 {folderPath || "Meu drive"}</span>
             </div>
             <div className="quick-scanner-header-actions">
-              {torchSupported ? (
+              <button
+                type="button"
+                className={`quick-scanner-torch${torchOn ? " is-active" : ""}`}
+                onClick={toggleTorch}
+                aria-label={torchOn ? "Desligar lanterna" : "Ligar lanterna"}
+                aria-pressed={torchOn}
+                title={torchSupported ? "Ligar lanterna do celular" : "Tentar ligar lanterna (se suportada)"}
+              >
+                <span aria-hidden="true">{torchOn ? "⚡" : "🔦"}</span>
+              </button>
+              {/* Torch control stays visible on devices whose browser hides the capability flag. */}
+              {false && (
                 <button type="button" onClick={toggleTorch} aria-label={torchOn ? "Desligar lanterna" : "Ligar lanterna"}>
                   {torchOn ? "⚡" : "♧"}
                 </button>
-              ) : null}
+              )}
               {devices.length > 1 ? <button type="button" onClick={switchCamera} aria-label="Trocar camera">⟳</button> : null}
               <button type="button" className="quick-scanner-finish" onClick={finish}>Finalizar</button>
             </div>
