@@ -10,8 +10,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "firebase": "^13.2.0",
-    "firebase-admin": "^14.5.0",
+    "firebase": "^11.5.0",
+    "firebase-admin": "^13.10.0",
     "formidable": "^3.5.4",
     "jszip": "^3.10.2",
     "qrcode": "^1.5.4",
