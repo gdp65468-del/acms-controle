@@ -2073,17 +2073,64 @@ export const appService = {
   },
 
   async deleteAdvance(advanceId) {
+    return this.trashAdvance(advanceId);
+  },
+
+  async trashAdvance(advanceId) {
     if (!firebaseEnabled) {
-      return localDb.deleteAdvance(advanceId);
+      return localDb.trashAdvance(advanceId, {
+        uid: auth?.currentUser?.uid || "local",
+        email: auth?.currentUser?.email || "",
+        name: auth?.currentUser?.displayName || "Tesouraria"
+      });
     }
     await apiRequest("/api/advances", {
       method: "POST",
       headers: await getTreasurerAuthHeaders(),
       body: {
-        action: "delete",
-        advanceId
+        action: "trash",
+        advanceIds: [advanceId]
       }
     });
+  },
+
+  async bulkTrashAdvances(advanceIds) {
+    if (!firebaseEnabled) {
+      return localDb.bulkTrashAdvances(advanceIds, {
+        uid: auth?.currentUser?.uid || "local",
+        email: auth?.currentUser?.email || "",
+        name: auth?.currentUser?.displayName || "Tesouraria"
+      });
+    }
+    const payload = await apiRequest("/api/advances", {
+      method: "POST",
+      headers: await getTreasurerAuthHeaders(),
+      body: { action: "bulkTrash", advanceIds: [...new Set(advanceIds || [])].slice(0, 100) }
+    });
+    return { trashed: payload.trashed || [], rejected: payload.rejected || [] };
+  },
+
+  async restoreAdvance(advanceId) {
+    if (!firebaseEnabled) {
+      return localDb.restoreAdvance(advanceId);
+    }
+    await apiRequest("/api/advances", {
+      method: "POST",
+      headers: await getTreasurerAuthHeaders(),
+      body: { action: "restore", advanceIds: [advanceId] }
+    });
+  },
+
+  async bulkRestoreAdvances(advanceIds) {
+    if (!firebaseEnabled) {
+      return localDb.bulkRestoreAdvances(advanceIds);
+    }
+    const payload = await apiRequest("/api/advances", {
+      method: "POST",
+      headers: await getTreasurerAuthHeaders(),
+      body: { action: "bulkRestore", advanceIds: [...new Set(advanceIds || [])].slice(0, 100) }
+    });
+    return { restored: payload.restored || [], rejected: payload.rejected || [] };
   },
 
   subscribeAssistantAccess(token, callback) {

@@ -239,7 +239,7 @@ function getPublicAdvanceDataByToken(store, token) {
   const advances = store.advances
     .filter((item) => item.usuarioId === memberId)
     .map((item) => ({ ...item, status: computeAdvanceStatus(item) }))
-    .filter((item) => !FINAL_ADVANCE_STATUSES.has(item.status))
+    .filter((item) => !item.deletedAt && !FINAL_ADVANCE_STATUSES.has(item.status))
     .sort((left, right) => new Date(right.dataAdiantamento || 0).getTime() - new Date(left.dataAdiantamento || 0).getTime());
 
   return {
@@ -1357,12 +1357,66 @@ export const localDb = {
 
   deleteAdvance(advanceId) {
     const store = readStore();
-    const exists = store.advances.some((item) => item.id === advanceId);
-    if (!exists) throw new Error("Adiantamento nao encontrado.");
-    store.advances = store.advances.filter((item) => item.id !== advanceId);
-    store.authorizations = store.authorizations.filter((item) => item.advanceId !== advanceId);
-    store.history = store.history.filter((item) => item.advanceId !== advanceId);
+    return this.trashAdvance(advanceId);
+  },
+
+  trashAdvance(advanceId, actor = {}) {
+    const store = readStore();
+    const advance = store.advances.find((item) => item.id === advanceId);
+    if (!advance) throw new Error("Adiantamento nao encontrado.");
+    if (advance.deletedAt) throw new Error("Este adiantamento ja esta na lixeira.");
+    const status = computeAdvanceStatus(advance);
+    if (advance.lancadoAcms || !["PENDENTE", "ATRASADO"].includes(status)) {
+      throw new Error("Este adiantamento nao pode ir para a lixeira porque ja foi prestado ou lancado no ACMS.");
+    }
+    advance.deletedAt = new Date().toISOString();
+    advance.deletedBy = actor.uid || actor.email || "tesouraria";
+    advance.deletedByName = actor.name || actor.email || "Tesouraria";
+    advance.deletedReason = "Movido para a lixeira pela tesouraria.";
+    saveHistory(store, advanceId, "ADIANTAMENTO_ENVIADO_LIXEIRA", "Adiantamento movido para a lixeira pela tesouraria.");
     writeStore(store);
     notify();
+    return { id: advanceId, ...advance };
+  },
+
+  bulkTrashAdvances(advanceIds, actor = {}) {
+    const trashed = [];
+    const rejected = [];
+    [...new Set(advanceIds || [])].slice(0, 100).forEach((id) => {
+      try {
+        trashed.push(this.trashAdvance(id, actor));
+      } catch (error) {
+        rejected.push({ id, reason: error.message });
+      }
+    });
+    return { trashed, rejected };
+  },
+
+  restoreAdvance(advanceId) {
+    const store = readStore();
+    const advance = store.advances.find((item) => item.id === advanceId);
+    if (!advance) throw new Error("Adiantamento nao encontrado.");
+    if (!advance.deletedAt) return advance;
+    delete advance.deletedAt;
+    delete advance.deletedBy;
+    delete advance.deletedByName;
+    delete advance.deletedReason;
+    saveHistory(store, advanceId, "ADIANTAMENTO_RESTAURADO", "Adiantamento restaurado pela tesouraria.");
+    writeStore(store);
+    notify();
+    return { id: advanceId, ...advance };
+  },
+
+  bulkRestoreAdvances(advanceIds) {
+    const restored = [];
+    const rejected = [];
+    [...new Set(advanceIds || [])].slice(0, 100).forEach((id) => {
+      try {
+        restored.push(this.restoreAdvance(id));
+      } catch (error) {
+        rejected.push({ id, reason: error.message });
+      }
+    });
+    return { restored, rejected };
   }
 };

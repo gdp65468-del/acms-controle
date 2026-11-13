@@ -11,6 +11,15 @@ import { VoiceNotePlayer } from "../components/VoiceNotePlayer";
 import { Icon } from "../components/Icon";
 import { useAppContext } from "../context/AppContext";
 import { acmsLaunchLabel, formatCurrency, formatDate, formatMonthYear, getOutstandingAmount } from "../utils/format";
+import {
+  filterAdvances,
+  getAdvanceTrashBlockReason,
+  groupAdvancesByDate,
+  groupAdvancesByPerson,
+  isAdvanceDueSoon,
+  isAdvanceInTrash,
+  isAdvanceTrashEligible
+} from "../utils/advanceView";
 
 export function TreasurerPage() {
   const { advances, users, authorizations, history, session, actions } = useAppContext();
@@ -18,8 +27,15 @@ export function TreasurerPage() {
   const [lastCreatedAdvanceId, setLastCreatedAdvanceId] = useState("");
   const [activeFilter, setActiveFilter] = useState("TODOS");
   const [searchQuery, setSearchQuery] = useState("");
-  const [organizeBy, setOrganizeBy] = useState("mes");
+  const [organizeBy, setOrganizeBy] = useState(() => localStorage.getItem("acms-advance-organize-by") || "pessoa");
   const [detailTab, setDetailTab] = useState("resumo");
+  const [acmsFilter, setAcmsFilter] = useState("TODOS");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [selectedAdvanceIds, setSelectedAdvanceIds] = useState(() => new Set());
+  const [selectedTrashIds, setSelectedTrashIds] = useState(() => new Set());
+  const [expandedPeople, setExpandedPeople] = useState(() => new Set());
+  const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [sidebarSection, setSidebarSection] = useState("dashboard");
   const [moduleTab, setModuleTab] = useState("pesquisar");
   const [assistantPortalData, setAssistantPortalData] = useState(null);
@@ -36,16 +52,32 @@ export function TreasurerPage() {
   const [toastType, setToastType] = useState("success");
   const topRef = useRef(null);
   const listRef = useRef(null);
-  const selectedAdvance = advances.find((item) => item.id === selectedAdvanceId) || advances[0];
+  const activeAdvances = advances.filter((item) => !isAdvanceInTrash(item));
+  const trashedAdvances = advances.filter(isAdvanceInTrash);
+  const selectedAdvance = advances.find((item) => item.id === selectedAdvanceId) || null;
   const assistantUser = session.assistantUser || users.find((item) => item.role === "assistant");
   const selectedMember = users.find((item) => item.id === selectedAdvance?.usuarioId);
   const publicPersonToken = selectedMember?.publicToken || selectedAdvance?.publicToken || "";
 
   useEffect(() => {
-    if (!selectedAdvanceId && advances[0]?.id) {
-      setSelectedAdvanceId(advances[0].id);
+    if (session.currentUser?.id) {
+      const saved = localStorage.getItem(`acms-advance-organize-by:${session.currentUser.id}`);
+      if (saved) setOrganizeBy(saved);
     }
-  }, [advances, selectedAdvanceId]);
+  }, [session.currentUser?.id]);
+
+  useEffect(() => {
+    localStorage.setItem("acms-advance-organize-by", organizeBy);
+    if (session.currentUser?.id) {
+      localStorage.setItem(`acms-advance-organize-by:${session.currentUser.id}`, organizeBy);
+    }
+  }, [organizeBy, session.currentUser?.id]);
+
+  useEffect(() => {
+    if (selectedAdvanceId && !activeAdvances.some((item) => item.id === selectedAdvanceId)) {
+      setSelectedAdvanceId("");
+    }
+  }, [activeAdvances, selectedAdvanceId]);
 
   useEffect(() => {
     if (!assistantUser) return;
@@ -80,7 +112,7 @@ export function TreasurerPage() {
   }, [toastMessage]);
 
   const totals = useMemo(() => {
-    return advances.reduce(
+    return activeAdvances.reduce(
       (accumulator, advance) => {
         accumulator.total += Number(advance.valor || 0);
         accumulator[advance.status] = (accumulator[advance.status] || 0) + 1;
@@ -89,44 +121,35 @@ export function TreasurerPage() {
       },
       { total: 0, PENDENTE: 0, ATRASADO: 0, PRESTADO: 0, JUSTIFICADO: 0, acmsPendente: 0 }
     );
-  }, [advances]);
+  }, [activeAdvances]);
 
   const filteredAdvances = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    return advances
-      .filter((item) => {
-        if (activeFilter === "TODOS") return true;
-        if (activeFilter === "ACMS_PENDENTE") return !item.lancadoAcms;
-        return item.status === activeFilter;
-      })
-      .filter((item) => {
-        if (!normalizedQuery) return true;
-        return (
-          item.usuarioNome.toLowerCase().includes(normalizedQuery) ||
-          item.descricao.toLowerCase().includes(normalizedQuery)
-        );
-      });
-  }, [advances, activeFilter, searchQuery]);
+    return filterAdvances(activeAdvances, {
+      query: searchQuery,
+      status: activeFilter === "ACMS_PENDENTE" ? "TODOS" : activeFilter,
+      acms: activeFilter === "ACMS_PENDENTE" ? "PENDENTE" : acmsFilter,
+      from: dateFrom,
+      to: dateTo
+    });
+  }, [activeAdvances, activeFilter, acmsFilter, dateFrom, dateTo, searchQuery]);
+
+  useEffect(() => {
+    setSelectedAdvanceIds((current) => {
+      const visible = new Set(filteredAdvances.map((item) => item.id));
+      const next = new Set([...current].filter((id) => visible.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filteredAdvances]);
 
   const groupedAdvances = useMemo(() => {
-    const groups = new Map();
-    filteredAdvances.forEach((advance) => {
-      const dateValue = advance.dataAdiantamento || advance.dataLimite;
-      const key =
-        organizeBy === "dia"
-          ? new Date(dateValue).toISOString().slice(0, 10)
-          : `${new Date(dateValue).getFullYear()}-${String(new Date(dateValue).getMonth() + 1).padStart(2, "0")}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          label: organizeBy === "dia" ? formatDate(dateValue) : formatMonthYear(dateValue),
-          items: []
-        });
-      }
-      groups.get(key).items.push(advance);
-    });
-    return Array.from(groups.values());
+    if (organizeBy === "pessoa") return groupAdvancesByPerson(filteredAdvances);
+    if (organizeBy === "lista") return [{ key: "lista", label: "Todos os adiantamentos", items: filteredAdvances }];
+    return groupAdvancesByDate(filteredAdvances, organizeBy, formatDate, formatMonthYear);
   }, [filteredAdvances, organizeBy]);
+
+  const eligibleVisibleIds = filteredAdvances.filter(isAdvanceTrashEligible).map((item) => item.id);
+  const selectedAdvances = advances.filter((item) => selectedAdvanceIds.has(item.id));
+  const selectedTotal = selectedAdvances.reduce((sum, item) => sum + Number(item.valor || 0), 0);
 
   async function handleCreateAdvance(payload) {
     const created = await actions.createAdvance(payload);
@@ -280,18 +303,111 @@ export function TreasurerPage() {
 
   async function handleDeleteAdvance() {
     if (!selectedAdvance) return;
-    const confirmed = window.confirm(`Excluir o adiantamento de ${selectedAdvance.usuarioNome}?`);
+    if (!isAdvanceTrashEligible(selectedAdvance)) {
+      setToastType("error");
+      setToastMessage(`Este registro não pode ir para a lixeira: ${getAdvanceTrashBlockReason(selectedAdvance)}.`);
+      return;
+    }
+    const confirmed = window.confirm(`Mover o adiantamento de ${selectedAdvance.usuarioNome} para a lixeira?`);
     if (!confirmed) return;
-    const currentIndex = advances.findIndex((item) => item.id === selectedAdvance.id);
-    const nextAdvance = advances[currentIndex + 1] || advances[currentIndex - 1] || null;
     try {
-      await actions.deleteAdvance(selectedAdvance.id);
-      setSelectedAdvanceId(nextAdvance?.id || "");
+      await actions.trashAdvance(selectedAdvance.id);
+      setSelectedAdvanceId("");
       setToastType("success");
-      setToastMessage("Adiantamento excluido com sucesso.");
+      setToastMessage("Adiantamento movido para a lixeira.");
     } catch (error) {
       setToastType("error");
-      setToastMessage(error.message || "Nao foi possivel excluir o adiantamento.");
+      setToastMessage(error.message || "Nao foi possivel mover o adiantamento.");
+    }
+  }
+
+  function toggleAdvanceSelection(advanceId) {
+    setSelectedAdvanceIds((current) => {
+      const next = new Set(current);
+      if (next.has(advanceId)) next.delete(advanceId);
+      else next.add(advanceId);
+      return next;
+    });
+  }
+
+  function toggleGroupSelection(group) {
+    const ids = group.items.filter(isAdvanceTrashEligible).map((item) => item.id);
+    setSelectedAdvanceIds((current) => {
+      const next = new Set(current);
+      const allSelected = ids.length > 0 && ids.every((id) => next.has(id));
+      ids.forEach((id) => (allSelected ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedAdvanceIds((current) => {
+      const next = new Set(current);
+      const allSelected = eligibleVisibleIds.length > 0 && eligibleVisibleIds.every((id) => next.has(id));
+      eligibleVisibleIds.forEach((id) => (allSelected ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  }
+
+  function toggleExpandedGroup(key) {
+    setExpandedPeople((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function expandAllGroups() {
+    setExpandedPeople(new Set(groupedAdvances.map((group) => group.key)));
+  }
+
+  function collapseAllGroups() {
+    setExpandedPeople(new Set());
+  }
+
+  async function handleBulkTrash() {
+    const ids = selectedAdvances.filter(isAdvanceTrashEligible).map((item) => item.id);
+    if (!ids.length) {
+      setToastType("error");
+      setToastMessage("Nenhum registro selecionado pode ir para a lixeira.");
+      return;
+    }
+    const blocked = selectedAdvances.length - ids.length;
+    const suffix = blocked ? ` ${blocked} registro(s) não elegível(is) serão ignorados.` : "";
+    if (!window.confirm(`Mover ${ids.length} adiantamento(s) para a lixeira?${suffix}`)) return;
+    try {
+      const result = await actions.bulkTrashAdvances(ids);
+      setSelectedAdvanceIds(new Set());
+      setToastType(result.rejected?.length ? "error" : "success");
+      setToastMessage(`${result.trashed?.length || 0} registro(s) movido(s) para a lixeira.${result.rejected?.length ? ` ${result.rejected.length} recusado(s).` : ""}`);
+    } catch (error) {
+      setToastType("error");
+      setToastMessage(error.message || "Não foi possível mover os registros.");
+    }
+  }
+
+  async function handleRestoreAdvance(advance) {
+    try {
+      await actions.restoreAdvance(advance.id);
+      setToastType("success");
+      setToastMessage("Adiantamento restaurado.");
+    } catch (error) {
+      setToastType("error");
+      setToastMessage(error.message || "Não foi possível restaurar o adiantamento.");
+    }
+  }
+
+  async function handleBulkRestore() {
+    if (!selectedTrashIds.size) return;
+    try {
+      const result = await actions.bulkRestoreAdvances([...selectedTrashIds]);
+      setSelectedTrashIds(new Set());
+      setToastType(result.rejected?.length ? "error" : "success");
+      setToastMessage(`${result.restored?.length || 0} registro(s) restaurado(s).${result.rejected?.length ? ` ${result.rejected.length} recusado(s).` : ""}`);
+    } catch (error) {
+      setToastType("error");
+      setToastMessage(error.message || "Não foi possível restaurar os registros.");
     }
   }
 
@@ -319,7 +435,7 @@ export function TreasurerPage() {
       setModuleTab("acms");
       setActiveFilter("ACMS_PENDENTE");
       setDetailTab("acms");
-      const nextAdvance = advances.find((item) => !item.lancadoAcms);
+      const nextAdvance = activeAdvances.find((item) => !item.lancadoAcms);
       if (nextAdvance) setSelectedAdvanceId(nextAdvance.id);
       scrollToRef(listRef);
       return;
@@ -456,6 +572,9 @@ export function TreasurerPage() {
             <button className="button-primary" type="button" onClick={() => handleSidebarNavigate("adiantamentos")}>
               + Novo
             </button>
+            <button className="button-ghost" type="button" onClick={() => setIsTrashOpen((value) => !value)}>
+              Lixeira{trashedAdvances.length ? ` (${trashedAdvances.length})` : ""}
+            </button>
             <button className="button-ghost" onClick={handleSignOut}>
               Sair
             </button>
@@ -538,7 +657,7 @@ export function TreasurerPage() {
           <SummaryCard title="Falta no ACMS" value={totals.acmsPendente} accent="sand" />
         </section>
 
-        <section className="dashboard-grid">
+        <section className={`dashboard-grid${!selectedAdvance && moduleTab !== "auxiliar" && !isTrashOpen ? " is-detail-collapsed" : ""}`}>
           <div className="board-column">
             {moduleTab === "adiantamento" ? (
               <AdvanceForm
@@ -813,6 +932,42 @@ export function TreasurerPage() {
                     </article>
                   )}
                 </div>
+              ) : isTrashOpen ? (
+                <div className="advance-trash-view">
+                  <div className="trash-toolbar">
+                    <div>
+                      <strong>Lixeira de adiantamentos</strong>
+                      <span>{trashedAdvances.length} registro(s) aguardando restauração.</span>
+                    </div>
+                    <div className="actions-row">
+                      {selectedTrashIds.size ? <button type="button" className="button-primary" onClick={() => void handleBulkRestore()}>Restaurar selecionados ({selectedTrashIds.size})</button> : null}
+                      <button type="button" className="button-ghost" onClick={() => setIsTrashOpen(false)}>Voltar aos ativos</button>
+                    </div>
+                  </div>
+                  {trashedAdvances.length ? trashedAdvances.map((advance) => (
+                    <article key={advance.id} className="trash-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedTrashIds.has(advance.id)}
+                        onChange={() => setSelectedTrashIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(advance.id)) next.delete(advance.id);
+                          else next.add(advance.id);
+                          return next;
+                        })}
+                      />
+                      <div className="row-main">
+                        <strong>{advance.usuarioNome}</strong>
+                        <span>{advance.descricao}</span>
+                        <small>Excluído em {formatDate(advance.deletedAt)} por {advance.deletedByName || advance.deletedBy || "tesouraria"}</small>
+                      </div>
+                      <strong>{formatCurrency(advance.valor)}</strong>
+                      <button type="button" className="button-ghost" onClick={() => void handleRestoreAdvance(advance)}>Restaurar</button>
+                    </article>
+                  )) : (
+                    <div className="empty-state"><strong>A lixeira está vazia</strong><span>Registros movidos para cá poderão ser restaurados.</span></div>
+                  )}
+                </div>
               ) : (
               <div className="list-toolbar">
                 <div className="search-wrap">
@@ -828,9 +983,22 @@ export function TreasurerPage() {
                 <div className="organize-wrap">
                   <label htmlFor="organize-by">Organizar por</label>
                   <select id="organize-by" value={organizeBy} onChange={(event) => setOrganizeBy(event.target.value)}>
+                    <option value="pessoa">Pessoa</option>
                     <option value="mes">Mes</option>
                     <option value="dia">Dia</option>
+                    <option value="lista">Lista completa</option>
                   </select>
+                </div>
+                <div className="date-filter-row">
+                  <label>De <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+                  <label>Até <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+                  <label>ACMS
+                    <select value={acmsFilter} onChange={(event) => setAcmsFilter(event.target.value)}>
+                      <option value="TODOS">Todos</option>
+                      <option value="PENDENTE">Pendente</option>
+                      <option value="LANCADO">Lançado</option>
+                    </select>
+                  </label>
                 </div>
                 <div className="filter-row">
                   {[
@@ -851,50 +1019,105 @@ export function TreasurerPage() {
                     </button>
                     ))}
                 </div>
+                <div className="list-actions-row">
+                  <label className="select-all-control">
+                    <input
+                      type="checkbox"
+                      checked={eligibleVisibleIds.length > 0 && eligibleVisibleIds.every((id) => selectedAdvanceIds.has(id))}
+                      onChange={toggleVisibleSelection}
+                    />
+                    Selecionar elegíveis visíveis
+                  </label>
+                  <div className="actions-row">
+                    <button type="button" className="button-ghost" onClick={expandAllGroups}>Expandir todos</button>
+                    <button type="button" className="button-ghost" onClick={collapseAllGroups}>Recolher todos</button>
+                  </div>
+                </div>
+                {selectedAdvanceIds.size ? (
+                  <div className="bulk-action-bar">
+                    <strong>{selectedAdvanceIds.size} selecionado(s)</strong>
+                    <span>{formatCurrency(selectedTotal)}</span>
+                    <button type="button" className="button-ghost" onClick={() => setSelectedAdvanceIds(new Set())}>Limpar seleção</button>
+                    <button type="button" className="button-danger" onClick={() => void handleBulkTrash()}>Mover para lixeira</button>
+                  </div>
+                ) : null}
               </div>
               )}
 
-              {moduleTab !== "auxiliar" ? (
+              {moduleTab !== "auxiliar" && !isTrashOpen ? (
               <div className="list-table">
                 {groupedAdvances.map((group) => (
                   <section key={group.key} className="list-group">
-                    <div className="group-header">{group.label}</div>
+                    {organizeBy === "pessoa" ? (
+                      <button type="button" className="person-group-header" onClick={() => toggleExpandedGroup(group.key)}>
+                        <span className="person-group-title">
+                          <strong>{group.name}</strong>
+                          <small>{group.items.length} adiantamento(s) · {formatCurrency(group.total)} · saldo {formatCurrency(group.outstanding)}</small>
+                        </span>
+                        <span className="person-group-metrics">
+                          {group.pending ? <b>{group.pending} pendente(s)</b> : null}
+                          {group.completed ? <b className="metric-success">{group.completed} concluído(s)</b> : null}
+                          {group.overdue ? <b className="metric-danger">{group.overdue} atrasado(s)</b> : null}
+                          {group.acmsPending ? <b className="metric-warning">{group.acmsPending} falta ACMS</b> : null}
+                          <Icon name="chevron" size={16} />
+                        </span>
+                      </button>
+                    ) : <div className="group-header">{group.label}</div>}
+                    {organizeBy === "pessoa" && !expandedPeople.has(group.key) ? null : (
+                    <>
                     <div className="list-head">
+                      <span>Selecionar</span>
                       <span>Nome</span>
                       <span>Valor</span>
-                      <span>Prazo</span>
+                      <span>Vencimento</span>
                       <span>Status</span>
                       <span>Acao</span>
                     </div>
                     {group.items.map((advance) => (
-                      <button
+                      <div
                         key={advance.id}
-                        className={`list-row ${selectedAdvance?.id === advance.id ? "is-active" : ""}`}
-                        onClick={() => setSelectedAdvanceId(advance.id)}
+                        className={`list-row ${selectedAdvance?.id === advance.id ? "is-active" : ""} ${advance.status === "ATRASADO" ? "is-overdue" : ""} ${isAdvanceDueSoon(advance) ? "is-due-soon" : ""}`}
                       >
+                        <input
+                          type="checkbox"
+                          checked={selectedAdvanceIds.has(advance.id)}
+                          disabled={!isAdvanceTrashEligible(advance)}
+                          title={isAdvanceTrashEligible(advance) ? "Selecionar" : getAdvanceTrashBlockReason(advance)}
+                          onChange={() => toggleAdvanceSelection(advance.id)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
                         <div className="row-main">
                           <strong>{advance.usuarioNome}</strong>
                           <span>{advance.descricao}</span>
-                          <small className="item-subline">{acmsLaunchLabel(advance.lancadoAcms)}</small>
+                          <small className="item-subline">{acmsLaunchLabel(advance.lancadoAcms)} · saldo {formatCurrency(getOutstandingAmount(advance))}</small>
                         </div>
                         <strong>{formatCurrency(advance.valor)}</strong>
-                        <span>{advance.prazoDias} dias</span>
+                        <span>{formatDate(advance.dataLimite)}</span>
                         <StatusBadge status={advance.status} />
-                        <span className="row-action">
-                          Verificar
-                          <Icon name="chevron" size={14} />
-                        </span>
-                      </button>
+                        <button type="button" className="row-action" onClick={() => setSelectedAdvanceId(advance.id)}>
+                          Ver detalhes <Icon name="chevron" size={14} />
+                        </button>
+                      </div>
                     ))}
+                    </>
+                    )}
                   </section>
                 ))}
+                {!groupedAdvances.length ? <div className="empty-state"><strong>Nenhum adiantamento encontrado</strong><span>Ajuste os filtros ou crie um novo registro.</span></div> : null}
               </div>
               ) : null}
             </section>
           </div>
 
           <aside className="detail-column">
-            {moduleTab === "auxiliar" ? (
+            {isTrashOpen ? (
+              <section className="panel detail-panel detail-empty-panel">
+                <div className="empty-state">
+                  <strong>Lixeira aberta</strong>
+                  <span>Restaure um registro pela lista para voltar a trabalhar com ele.</span>
+                </div>
+              </section>
+            ) : moduleTab === "auxiliar" ? (
               <section className="panel detail-panel">
                 <div className="panel-heading">
                   <div>
@@ -1014,6 +1237,7 @@ export function TreasurerPage() {
                     <h3>Detalhes do adiantamento</h3>
                     <p>Responsavel: {selectedAdvance.usuarioNome}</p>
                   </div>
+                  <button type="button" className="icon-button" aria-label="Fechar detalhes" onClick={() => setSelectedAdvanceId("")}>×</button>
                   <PrintTermButton
                     advance={selectedAdvance}
                     onPrinted={() => actions.registerTermPrinted(selectedAdvance.id)}
@@ -1170,7 +1394,7 @@ export function TreasurerPage() {
 
                 <div className="actions-row">
                   <button type="button" className="button-danger" onClick={handleDeleteAdvance}>
-                    Excluir adiantamento
+                    Mover para a lixeira
                   </button>
                 </div>
               </section>

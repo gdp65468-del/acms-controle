@@ -135,7 +135,7 @@ async function resolvePublicAdvanceData(token) {
 
   const advances = advancesSnapshot.docs
     .map(mapAdvance)
-    .filter((item) => !FINAL_STATUSES.has(item.status))
+    .filter((item) => !item.deletedAt && !FINAL_STATUSES.has(item.status))
     .sort((left, right) => new Date(right.dataAdiantamento || 0).getTime() - new Date(left.dataAdiantamento || 0).getTime());
 
   return {

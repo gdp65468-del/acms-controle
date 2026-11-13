@@ -24,7 +24,12 @@ service cloud.firestore {
     }
 
     match /adiantamentos/{advanceId} {
-      allow read, create, update, delete: if isTreasurer();
+      allow read, create: if isTreasurer();
+      allow update: if isTreasurer() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "deletedAt", "deletedBy", "deletedByName", "deletedReason"
+        ]);
+      allow delete: if false;
     }
 
     match /autorizacoes_repasse/{authorizationId} {

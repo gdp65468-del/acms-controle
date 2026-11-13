@@ -1,4 +1,4 @@
-import { getAdminDb } from "../_lib/firebaseAdmin.js";
+import { getAdminDb, Timestamp } from "../_lib/firebaseAdmin.js";
 import { requireTreasurer } from "../_lib/auth.js";
 import {
   getPublicAdvanceSettings,
@@ -8,39 +8,112 @@ import {
 } from "../_lib/publicAdvances.js";
 import { getBearerToken, readJsonBody, requireMethod, sendError, sendJson } from "../_lib/http.js";
 
-async function handleDeleteAdvance(req, res) {
-  await requireTreasurer(req);
+function computeServerAdvanceStatus(advance) {
+  const total = Number(advance.totalComprovado || 0);
+  const value = Number(advance.valor || 0);
+  if (total >= value && value > 0) return "PRESTADO";
+  if (String(advance.justificativa || "").trim()) return "JUSTIFICADO";
+  const dueDate = typeof advance.dataLimite?.toDate === "function"
+    ? advance.dataLimite.toDate()
+    : new Date(advance.dataLimite || 0);
+  return !Number.isNaN(dueDate.getTime()) && dueDate < new Date() ? "ATRASADO" : "PENDENTE";
+}
+
+function canTrashAdvance(advance) {
+  return !advance.deletedAt
+    && !advance.lancadoAcms
+    && ["PENDENTE", "ATRASADO"].includes(computeServerAdvanceStatus(advance));
+}
+
+async function handleTrashAdvances(req, res) {
+  const actor = await requireTreasurer(req);
   const adminDb = getAdminDb();
   const body = await readJsonBody(req);
-  const advanceId = String(body.advanceId || "").trim();
+  const advanceIds = [...new Set((Array.isArray(body.advanceIds) ? body.advanceIds : [body.advanceId]).map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
 
-  if (!advanceId) {
+  if (!advanceIds.length) {
     sendError(res, 400, "Adiantamento nao informado.");
     return;
   }
 
-  const advanceRef = adminDb.collection("adiantamentos").doc(advanceId);
-  const advanceSnapshot = await advanceRef.get();
-  if (!advanceSnapshot.exists) {
-    sendError(res, 404, "Adiantamento nao encontrado.");
+  const snapshots = await Promise.all(advanceIds.map((id) => adminDb.collection("adiantamentos").doc(id).get()));
+  const batch = adminDb.batch();
+  const trashed = [];
+  const rejected = [];
+  const now = new Date().toISOString();
+  snapshots.forEach((snapshot, index) => {
+    const id = advanceIds[index];
+    if (!snapshot.exists) {
+      rejected.push({ id, reason: "Adiantamento nao encontrado." });
+      return;
+    }
+    const advance = snapshot.data() || {};
+    if (!canTrashAdvance(advance)) {
+      rejected.push({ id, reason: "Registro prestado, justificado, ja lancado no ACMS ou ja enviado para a lixeira." });
+      return;
+    }
+    const advanceRef = adminDb.collection("adiantamentos").doc(id);
+    batch.update(advanceRef, {
+      deletedAt: now,
+      deletedBy: actor.uid,
+      deletedByName: actor.profile?.nome || actor.email || "Tesouraria",
+      deletedReason: "Movido para a lixeira pela tesouraria."
+    });
+    const historyRef = adminDb.collection("historico_eventos").doc();
+    batch.set(historyRef, {
+      advanceId: id,
+      type: "ADIANTAMENTO_ENVIADO_LIXEIRA",
+      message: "Adiantamento movido para a lixeira pela tesouraria.",
+      createdAt: Timestamp.now(),
+      createdBy: actor.uid
+    });
+    trashed.push(id);
+  });
+  if (trashed.length) await batch.commit();
+  sendJson(res, 200, { ok: true, trashed, rejected });
+}
+
+async function handleRestoreAdvances(req, res) {
+  const actor = await requireTreasurer(req);
+  const adminDb = getAdminDb();
+  const body = await readJsonBody(req);
+  const advanceIds = [...new Set((Array.isArray(body.advanceIds) ? body.advanceIds : [body.advanceId]).map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
+  if (!advanceIds.length) {
+    sendError(res, 400, "Adiantamento nao informado.");
     return;
   }
-
-  const historySnapshot = await adminDb.collection("historico_eventos").where("advanceId", "==", advanceId).get();
-  const authorizationSnapshot = await adminDb.collection("autorizacoes_repasse").where("advanceId", "==", advanceId).get();
-
   const batch = adminDb.batch();
-  historySnapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-  authorizationSnapshot.forEach((docSnap) => {
-    batch.delete(docSnap.ref);
-    const authorization = docSnap.data() || {};
-    const accessToken = String(authorization.assistantAccessToken || "principal");
-    batch.delete(adminDb.collection("acesso_auxiliar").doc(accessToken).collection("ordens").doc(docSnap.id));
+  const restored = [];
+  const rejected = [];
+  const snapshots = await Promise.all(advanceIds.map((id) => adminDb.collection("adiantamentos").doc(id).get()));
+  snapshots.forEach((snapshot, index) => {
+    const id = advanceIds[index];
+    if (!snapshot.exists) {
+      rejected.push({ id, reason: "Adiantamento nao encontrado." });
+      return;
+    }
+    if (!snapshot.data()?.deletedAt) {
+      rejected.push({ id, reason: "Este adiantamento nao esta na lixeira." });
+      return;
+    }
+    batch.update(snapshot.ref, {
+      deletedAt: "",
+      deletedBy: "",
+      deletedByName: "",
+      deletedReason: ""
+    });
+    const historyRef = adminDb.collection("historico_eventos").doc();
+    batch.set(historyRef, {
+      advanceId: id,
+      type: "ADIANTAMENTO_RESTAURADO",
+      message: "Adiantamento restaurado pela tesouraria.",
+      createdAt: Timestamp.now(),
+      createdBy: actor.uid
+    });
+    restored.push(id);
   });
-  batch.delete(advanceRef);
-  await batch.commit();
-
-  sendJson(res, 200, { ok: true });
+  if (restored.length) await batch.commit();
+  sendJson(res, 200, { ok: true, restored, rejected });
 }
 
 export default async function handler(req, res) {
@@ -77,8 +150,13 @@ export default async function handler(req, res) {
     const body = await readJsonBody(req);
     const action = String(body.action || "").trim();
 
-    if (action === "delete") {
-      await handleDeleteAdvance(req, res);
+    if (action === "delete" || action === "trash" || action === "bulkTrash") {
+      await handleTrashAdvances(req, res);
+      return;
+    }
+
+    if (action === "restore" || action === "bulkRestore") {
+      await handleRestoreAdvances(req, res);
       return;
     }
 
