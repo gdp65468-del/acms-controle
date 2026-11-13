@@ -29,7 +29,10 @@ async function handleTrashAdvances(req, res) {
   const actor = await requireTreasurer(req);
   const adminDb = getAdminDb();
   const body = await readJsonBody(req);
-  const advanceIds = [...new Set((Array.isArray(body.advanceIds) ? body.advanceIds : [body.advanceId]).map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
+  const requestedIds = Array.isArray(body.advanceIds)
+    ? body.advanceIds
+    : [body.advanceId ?? body.id];
+  const advanceIds = [...new Set(requestedIds.map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
 
   if (!advanceIds.length) {
     sendError(res, 400, "Adiantamento nao informado.");
@@ -77,7 +80,10 @@ async function handleRestoreAdvances(req, res) {
   const actor = await requireTreasurer(req);
   const adminDb = getAdminDb();
   const body = await readJsonBody(req);
-  const advanceIds = [...new Set((Array.isArray(body.advanceIds) ? body.advanceIds : [body.advanceId]).map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
+  const requestedIds = Array.isArray(body.advanceIds)
+    ? body.advanceIds
+    : [body.advanceId ?? body.id];
+  const advanceIds = [...new Set(requestedIds.map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 100);
   if (!advanceIds.length) {
     sendError(res, 400, "Adiantamento nao informado.");
     return;

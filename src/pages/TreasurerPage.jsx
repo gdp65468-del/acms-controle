@@ -303,6 +303,11 @@ export function TreasurerPage() {
 
   async function handleDeleteAdvance() {
     if (!selectedAdvance) return;
+    if (!selectedAdvance.id) {
+      setToastType("error");
+      setToastMessage("Nao foi possivel identificar o adiantamento selecionado.");
+      return;
+    }
     if (!isAdvanceTrashEligible(selectedAdvance)) {
       setToastType("error");
       setToastMessage(`Este registro não pode ir para a lixeira: ${getAdvanceTrashBlockReason(selectedAdvance)}.`);

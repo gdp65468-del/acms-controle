@@ -2077,8 +2077,12 @@ export const appService = {
   },
 
   async trashAdvance(advanceId) {
+    const normalizedAdvanceId = String(advanceId || "").trim();
+    if (!normalizedAdvanceId) {
+      throw new Error("Nao foi possivel identificar o adiantamento selecionado.");
+    }
     if (!firebaseEnabled) {
-      return localDb.trashAdvance(advanceId, {
+      return localDb.trashAdvance(normalizedAdvanceId, {
         uid: auth?.currentUser?.uid || "local",
         email: auth?.currentUser?.email || "",
         name: auth?.currentUser?.displayName || "Tesouraria"
@@ -2089,7 +2093,10 @@ export const appService = {
       headers: await getTreasurerAuthHeaders(),
       body: {
         action: "trash",
-        advanceIds: [advanceId]
+        // Envia os dois formatos para manter compatibilidade com deployments
+        // antigos da funcao e com a API atual de operacoes em lote.
+        advanceId: normalizedAdvanceId,
+        advanceIds: [normalizedAdvanceId]
       }
     });
   },
